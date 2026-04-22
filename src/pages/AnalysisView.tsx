@@ -62,7 +62,7 @@ export default function AnalysisView() {
         supabase.from('panic_logs').select('raw_content, filename').eq('id', a.panic_log_id).single(),
         supabase.from('parsed_logs').select('metadata').eq('panic_log_id', a.panic_log_id).single(),
       ]);
-      setHypotheses(h ?? []); setEvidences(e ?? []); setSuggestions(s ?? []);
+      setHypotheses((h ?? []) as any); setEvidences((e ?? []) as any); setSuggestions((s ?? []) as any);
       setCaseInfo(c ?? null); setLogInfo(log ?? null); setParsedMeta(parsed?.metadata ?? null);
     })();
   }, [id, currentOrgId]);
