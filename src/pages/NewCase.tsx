@@ -160,6 +160,12 @@ export default function NewCase() {
         })));
       }
 
+      // Registrar consumo da licença (best-effort, não bloqueia)
+      await supabase.from('usage_events').insert({
+        org_id: currentOrgId, user_id: user.id, kind: 'analysis_created', ref_id: analysisRow.id,
+      });
+      refreshLicense();
+
       toast.success('Análise concluída.');
       nav(`/app/analysis/${analysisRow.id}`);
     } catch (e: any) {
@@ -172,10 +178,35 @@ export default function NewCase() {
 
   return (
     <div className="space-y-6 max-w-5xl">
-      <div>
-        <h1 className="text-3xl font-semibold tracking-tight">Nova análise</h1>
-        <p className="text-muted-foreground text-sm mt-1">Cole ou envie o panic-full do iPhone para diagnóstico imediato.</p>
+      <div className="flex items-end justify-between flex-wrap gap-3">
+        <div>
+          <h1 className="text-3xl font-semibold tracking-tight">Nova análise</h1>
+          <p className="text-muted-foreground text-sm mt-1">Cole ou envie o panic-full do iPhone para diagnóstico imediato.</p>
+        </div>
+        {license && (
+          <Link to="/app/billing" className="text-xs flex items-center gap-2 px-3 py-2 rounded-md border border-border hover:border-primary/40 transition-colors">
+            <Crown className="h-3 w-3 text-primary" />
+            <span className="font-medium">{license.plan_name}</span>
+            <span className="text-muted-foreground">·</span>
+            <span className="text-muted-foreground">{license.monthly_analyses_limit === null ? `${used} análises (ilimitado)` : `${used}/${license.monthly_analyses_limit} este mês`}</span>
+          </Link>
+        )}
       </div>
+
+      {!canAnalyze && (
+        <div className="rounded-lg border border-warning/40 bg-warning/10 p-4 flex items-start gap-3">
+          <Lock className="h-5 w-5 text-warning shrink-0 mt-0.5" />
+          <div className="flex-1">
+            <div className="font-semibold text-warning">{license ? 'Limite mensal atingido' : 'Sem licença ativa'}</div>
+            <p className="text-sm text-muted-foreground mt-1">
+              {license
+                ? `Você usou ${used} de ${license.monthly_analyses_limit} análises do plano ${license.plan_name}. Atualize o plano para continuar.`
+                : 'Sua organização não tem uma licença ativa. Contate o administrador da plataforma.'}
+            </p>
+            <Button asChild size="sm" className="mt-3"><Link to="/app/billing">Ver planos</Link></Button>
+          </div>
+        </div>
+      )}
 
       <Card className="panel p-6 space-y-5">
         <div className="grid md:grid-cols-2 gap-4">
