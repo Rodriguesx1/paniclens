@@ -517,6 +517,72 @@ export type Database = {
         }
         Relationships: []
       }
+      licenses: {
+        Row: {
+          created_at: string
+          expires_at: string | null
+          id: string
+          issued_at: string
+          issued_by: string | null
+          license_key: string
+          members_limit_override: number | null
+          monthly_analyses_limit_override: number | null
+          notes: string | null
+          org_id: string
+          plan_id: string
+          starts_at: string
+          status: Database["public"]["Enums"]["license_status"]
+          updated_at: string
+        }
+        Insert: {
+          created_at?: string
+          expires_at?: string | null
+          id?: string
+          issued_at?: string
+          issued_by?: string | null
+          license_key: string
+          members_limit_override?: number | null
+          monthly_analyses_limit_override?: number | null
+          notes?: string | null
+          org_id: string
+          plan_id: string
+          starts_at?: string
+          status?: Database["public"]["Enums"]["license_status"]
+          updated_at?: string
+        }
+        Update: {
+          created_at?: string
+          expires_at?: string | null
+          id?: string
+          issued_at?: string
+          issued_by?: string | null
+          license_key?: string
+          members_limit_override?: number | null
+          monthly_analyses_limit_override?: number | null
+          notes?: string | null
+          org_id?: string
+          plan_id?: string
+          starts_at?: string
+          status?: Database["public"]["Enums"]["license_status"]
+          updated_at?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "licenses_org_id_fkey"
+            columns: ["org_id"]
+            isOneToOne: false
+            referencedRelation: "organizations"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "licenses_plan_id_fkey"
+            columns: ["plan_id"]
+            isOneToOne: false
+            referencedRelation: "plans"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       memberships: {
         Row: {
           created_at: string
@@ -678,6 +744,54 @@ export type Database = {
           },
         ]
       }
+      plans: {
+        Row: {
+          code: string
+          created_at: string
+          description: string | null
+          features: Json
+          id: string
+          is_public: boolean
+          members_limit: number | null
+          monthly_analyses_limit: number | null
+          monthly_cases_limit: number | null
+          monthly_price_cents: number
+          name: string
+          sort_order: number
+          updated_at: string
+        }
+        Insert: {
+          code: string
+          created_at?: string
+          description?: string | null
+          features?: Json
+          id?: string
+          is_public?: boolean
+          members_limit?: number | null
+          monthly_analyses_limit?: number | null
+          monthly_cases_limit?: number | null
+          monthly_price_cents?: number
+          name: string
+          sort_order?: number
+          updated_at?: string
+        }
+        Update: {
+          code?: string
+          created_at?: string
+          description?: string | null
+          features?: Json
+          id?: string
+          is_public?: boolean
+          members_limit?: number | null
+          monthly_analyses_limit?: number | null
+          monthly_cases_limit?: number | null
+          monthly_price_cents?: number
+          name?: string
+          sort_order?: number
+          updated_at?: string
+        }
+        Relationships: []
+      }
       profiles: {
         Row: {
           created_at: string
@@ -779,11 +893,53 @@ export type Database = {
           },
         ]
       }
+      usage_events: {
+        Row: {
+          created_at: string
+          id: string
+          kind: string
+          org_id: string
+          ref_id: string | null
+          user_id: string | null
+        }
+        Insert: {
+          created_at?: string
+          id?: string
+          kind: string
+          org_id: string
+          ref_id?: string | null
+          user_id?: string | null
+        }
+        Update: {
+          created_at?: string
+          id?: string
+          kind?: string
+          org_id?: string
+          ref_id?: string | null
+          user_id?: string | null
+        }
+        Relationships: []
+      }
     }
     Views: {
       [_ in never]: never
     }
     Functions: {
+      can_consume_analysis: { Args: { _org: string }; Returns: boolean }
+      count_analyses_this_month: { Args: { _org: string }; Returns: number }
+      get_active_license_for_org: {
+        Args: { _org: string }
+        Returns: {
+          expires_at: string
+          features: Json
+          license_id: string
+          members_limit: number
+          monthly_analyses_limit: number
+          plan_code: string
+          plan_name: string
+          status: Database["public"]["Enums"]["license_status"]
+        }[]
+      }
       has_role_in_org: {
         Args: {
           _org: string
@@ -832,6 +988,7 @@ export type Database = {
         | "cpu_memory"
         | "peripheral_communication"
         | "unknown"
+      license_status: "active" | "trial" | "suspended" | "expired" | "revoked"
       repair_tier:
         | "simple_swap"
         | "peripheral_diagnosis"
@@ -1005,6 +1162,7 @@ export const Constants = {
         "peripheral_communication",
         "unknown",
       ],
+      license_status: ["active", "trial", "suspended", "expired", "revoked"],
       repair_tier: [
         "simple_swap",
         "peripheral_diagnosis",
