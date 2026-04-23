@@ -65,6 +65,7 @@ export async function findSimilarCases(ref: Reference, limit = 6): Promise<Simil
   const { data: cases } = await supabase
     .from('cases')
     .select('id, title, status, outcome')
+    .eq('org_id', ref.orgId)
     .in('id', caseIds);
 
   const caseMap = new Map((cases ?? []).map((c: any) => [c.id, c]));

@@ -6,7 +6,7 @@
  * The engine consumes parsed evidences and produces hypotheses with confidence.
  */
 
-export const RULESET_VERSION = '1.0.0';
+export const RULESET_VERSION = '2.0.0';
 
 export type DiagnosticCategory =
   | 'thermal' | 'sensors' | 'watchdog' | 'battery' | 'charging' | 'dock_flex'
@@ -26,6 +26,8 @@ export type DiagnosticRule = {
   description: string;
   /** evidence keys that MUST appear (any of these counts as hit) */
   includeMatchers: string[];
+  /** any = one include hit is enough, all = all include keys must be present */
+  includeMode?: 'any' | 'all';
   /** boost matchers — increase confidence if also present */
   optionalMatchers?: string[];
   /** if any of these present, this rule is suppressed/conflicts */
@@ -475,6 +477,127 @@ export const RULES: DiagnosticRule[] = [
       { actionTitle: 'Isolar periféricos do barramento', actionType: 'subsystem_isolation', priority: 1, difficulty: 'high', technicalRisk: 'medium', expectedResolutionChance: 45, whyThisAction: 'Identifica origem do bloqueio.' },
     ],
     tags: ['peripheral'],
+  },
+  {
+    id: 'rule.sensors.missing_specific',
+    version: '2.0.0', name: 'Sensores ausentes explicitamente no panic',
+    category: 'sensors',
+    description: 'O parser extrai nomes de sensores ausentes. Isso normalmente indica falha física de sensor, flex ou linha.',
+    includeMatchers: ['missing_sensor_name', 'missing_sensors'],
+    includeMode: 'any',
+    evidenceWeight: 32, severityImpact: 'high',
+    primaryHypothesis: 'Sensor crítico ausente/intermitente (linha, flex ou sensor defeituoso).',
+    secondaryHypothesis: 'Mau contato em conector relacionado ao sensor ausente.',
+    suspectedComponents: ['sensor citado no log', 'flex do subsistema', 'conector FPC', 'linha de barramento do sensor'],
+    probableSubsystem: 'Sensor fabric',
+    probableRepairTier: 'connector_or_line_check',
+    confidenceBase: 72,
+    explanationTemplate: 'Há sensores ausentes no log ({evidence}). Isso é evidência estruturada forte de falha real de leitura física.',
+    recommendedTests: ['Identificar sensor exato no esquema', 'Reseat do flex correlato', 'Medição de continuidade na linha do sensor', 'Swap test do periférico ligado ao sensor'],
+    suggestedActions: [
+      { actionTitle: 'Correlacionar sensor ausente com net no esquema', actionType: 'inspection', priority: 1, difficulty: 'medium', technicalRisk: 'low', expectedResolutionChance: 50, whyThisAction: 'Evita tentativa aleatória e direciona o teste para o ponto certo.' },
+      { actionTitle: 'Medição de continuidade da linha do sensor', actionType: 'line_check', priority: 2, difficulty: 'medium', technicalRisk: 'medium', expectedResolutionChance: 58, whyThisAction: 'Confirma se é periférico ou trilha.' },
+    ],
+    tags: ['sensors', 'structured-evidence'],
+  },
+  {
+    id: 'rule.proximity.standalone',
+    version: '2.0.0', name: 'Falha de proximidade',
+    category: 'proximity',
+    description: 'Referência direta ao sensor de proximidade sem dependência de outras regras.',
+    includeMatchers: ['proximity_ref'],
+    evidenceWeight: 26, severityImpact: 'moderate',
+    primaryHypothesis: 'Sensor de proximidade/front assembly com falha intermitente.',
+    suspectedComponents: ['sensor de proximidade', 'front flex', 'conector superior'],
+    probableSubsystem: 'Proximity / front sensor',
+    probableRepairTier: 'simple_swap',
+    confidenceBase: 62,
+    explanationTemplate: 'Referências de proximidade encontradas ({evidence}). Priorizar validação do conjunto frontal.',
+    recommendedTests: ['Swap do conjunto frontal compatível', 'Reseat de front flex', 'Inspeção de umidade/oxidação no topo'],
+    suggestedActions: [
+      { actionTitle: 'Swap de front assembly de teste', actionType: 'swap_test', priority: 1, difficulty: 'medium', technicalRisk: 'medium', expectedResolutionChance: 63, whyThisAction: 'Diferencia rapidamente peça periférica de falha de placa.' },
+    ],
+    tags: ['proximity'],
+  },
+  {
+    id: 'rule.audio.route_stall',
+    version: '2.0.0', name: 'Travamento de rota de áudio',
+    category: 'audio',
+    description: 'Padrão de travamento em stack de áudio, útil mesmo sem referência explícita ao codec.',
+    includeMatchers: ['audio_ref'],
+    excludeMatchers: ['baseband_panic', 'nand_anomaly'],
+    evidenceWeight: 24, severityImpact: 'moderate',
+    primaryHypothesis: 'Falha no caminho de áudio (codec/amplificador/flex/speaker).',
+    suspectedComponents: ['speaker superior/inferior', 'amplificador', 'codec', 'linhas de áudio'],
+    probableSubsystem: 'Audio path',
+    probableRepairTier: 'peripheral_diagnosis',
+    confidenceBase: 58,
+    explanationTemplate: 'Evidências de áudio ({evidence}) sem sinal dominante de baseband/storage apontam para stack de áudio.',
+    recommendedTests: ['Swap de speaker', 'Inspeção do flex de áudio', 'Medição no codec se persistir'],
+    suggestedActions: [
+      { actionTitle: 'Swap dos módulos de áudio periféricos', actionType: 'swap_test', priority: 1, difficulty: 'low', technicalRisk: 'low', expectedResolutionChance: 52, whyThisAction: 'Resolve parte relevante dos casos sem micro solda.' },
+    ],
+    tags: ['audio'],
+  },
+  {
+    id: 'rule.power.pmu_only',
+    version: '2.0.0', name: 'Power sequencing/PMU anômalo',
+    category: 'power',
+    description: 'Sinais diretos de falha de sequenciamento de energia.',
+    includeMatchers: ['pmu_power'],
+    excludeMatchers: ['rail_instability'],
+    evidenceWeight: 28, severityImpact: 'high',
+    primaryHypothesis: 'Sequenciamento de energia instável com foco em PMU/PMIC.',
+    suspectedComponents: ['PMU/PMIC', 'linhas enable', 'componentes de power key'],
+    probableSubsystem: 'Power sequencing',
+    probableRepairTier: 'advanced_board_diagnosis',
+    confidenceBase: 64,
+    explanationTemplate: 'Há indício direto de PMU/power sequencing ({evidence}). O padrão tende a board-level.',
+    recommendedTests: ['Medir sinais de enable no boot', 'Validar botão power e linha', 'Termografia em PMIC'],
+    suggestedActions: [
+      { actionTitle: 'Medição de sequência de power rails', actionType: 'measurement', priority: 1, difficulty: 'expert', technicalRisk: 'high', expectedResolutionChance: 47, whyThisAction: 'Confirma se há estágio específico da sequência quebrando.' },
+    ],
+    tags: ['power'],
+  },
+  {
+    id: 'rule.front_flex.standalone',
+    version: '2.0.0', name: 'Front flex com indícios diretos',
+    category: 'front_flex',
+    description: 'Regra independente para eventos de front flex, útil quando proximity não aparece.',
+    includeMatchers: ['front_flex_ref'],
+    excludeMatchers: ['face_id_ref'],
+    evidenceWeight: 24, severityImpact: 'moderate',
+    primaryHypothesis: 'Falha no front flex/conector superior.',
+    suspectedComponents: ['front flex', 'conector superior', 'sensores frontais'],
+    probableSubsystem: 'Front assembly',
+    probableRepairTier: 'simple_swap',
+    confidenceBase: 60,
+    explanationTemplate: 'Padrão de front flex detectado ({evidence}) sem evidência forte de Face ID.',
+    recommendedTests: ['Reseat e limpeza do conector superior', 'Swap de front flex de teste'],
+    suggestedActions: [
+      { actionTitle: 'Reseat e limpeza do conector frontal', actionType: 'connector_check', priority: 1, difficulty: 'low', technicalRisk: 'low', expectedResolutionChance: 48, whyThisAction: 'Mau contato é causa frequente após troca de tela.' },
+    ],
+    tags: ['front_flex'],
+  },
+  {
+    id: 'rule.codec.i2c_hard',
+    version: '2.0.0', name: 'Codec com falha de barramento',
+    category: 'codec',
+    description: 'Regra estrita para quando codec e I2C aparecem juntos.',
+    includeMatchers: ['codec_ref', 'i2c_fault'],
+    includeMode: 'all',
+    evidenceWeight: 38, severityImpact: 'high',
+    primaryHypothesis: 'Codec travando o barramento I2C (curto/intermitência/CI degradado).',
+    suspectedComponents: ['CI codec', 'SCL/SDA do codec', 'pull-up resistors'],
+    probableSubsystem: 'Codec I2C bus',
+    probableRepairTier: 'advanced_board_diagnosis',
+    confidenceBase: 74,
+    explanationTemplate: 'Codec + I2C no mesmo panic ({evidence}) é assinatura forte de falha elétrica no barramento do codec.',
+    recommendedTests: ['Osciloscópio em SDA/SCL', 'Injeção/termografia no CI codec', 'Isolamento de consumidores no barramento'],
+    suggestedActions: [
+      { actionTitle: 'Osciloscópio na linha I2C do codec', actionType: 'measurement', priority: 1, difficulty: 'expert', technicalRisk: 'high', expectedResolutionChance: 62, whyThisAction: 'Evidencia travamento real do barramento para decisão de retrabalho.' },
+    ],
+    tags: ['codec', 'i2c'],
   },
 ];
 

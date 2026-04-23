@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { useNavigate, Navigate, Link } from 'react-router-dom';
 import { supabase } from '@/integrations/supabase/client';
 import { useAuth } from '@/hooks/useAuth';
@@ -24,9 +24,16 @@ const loginSchema = z.object({
 export default function Auth() {
   const { user } = useAuth();
   const nav = useNavigate();
-  const [mode, setMode] = useState<'login' | 'signup'>('login');
+  const [mode, setMode] = useState<'login' | 'signup' | 'reset' | 'update_password'>('login');
   const [loading, setLoading] = useState(false);
   const [form, setForm] = useState({ email: '', password: '', fullName: '', orgName: '' });
+
+  useEffect(() => {
+    const hash = window.location.hash || '';
+    if (hash.includes('type=recovery')) {
+      setMode('update_password');
+    }
+  }, []);
 
   if (user) return <Navigate to="/app" replace />;
 
@@ -46,7 +53,26 @@ export default function Auth() {
           },
         });
         if (error) throw error;
-        toast.success('Conta criada. Entrando…');
+        toast.success('Conta criada. Verifique seu email para confirmar o acesso.');
+        setMode('login');
+      } else if (mode === 'reset') {
+        const parsed = loginSchema.pick({ email: true }).safeParse(form);
+        if (!parsed.success) { toast.error(parsed.error.issues[0].message); return; }
+        const { error } = await supabase.auth.resetPasswordForEmail(parsed.data.email, {
+          redirectTo: `${window.location.origin}/auth`,
+        });
+        if (error) throw error;
+        toast.success('Enviamos o link de redefinição para seu email.');
+        setMode('login');
+      } else if (mode === 'update_password') {
+        const nextPassword = form.password.trim();
+        if (nextPassword.length < 8) {
+          toast.error('A nova senha deve ter ao menos 8 caracteres.');
+          return;
+        }
+        const { error } = await supabase.auth.updateUser({ password: nextPassword });
+        if (error) throw error;
+        toast.success('Senha redefinida com sucesso.');
         nav('/app', { replace: true });
       } else {
         const parsed = loginSchema.safeParse(form);
@@ -76,9 +102,17 @@ export default function Auth() {
         </Link>
 
         <Card className="p-6 panel">
-          <h1 className="text-2xl font-semibold mb-1">{mode === 'login' ? 'Entrar' : 'Criar conta'}</h1>
+          <h1 className="text-2xl font-semibold mb-1">
+            {mode === 'login' ? 'Entrar' : mode === 'signup' ? 'Criar conta' : mode === 'reset' ? 'Recuperar senha' : 'Definir nova senha'}
+          </h1>
           <p className="text-sm text-muted-foreground mb-6">
-            {mode === 'login' ? 'Acesse seu workspace técnico.' : 'Comece a analisar panic-fulls em minutos.'}
+            {mode === 'login'
+              ? 'Acesse seu workspace técnico.'
+              : mode === 'signup'
+                ? 'Comece a analisar panic-fulls em minutos.'
+                : mode === 'reset'
+                  ? 'Informe seu email para recuperar o acesso.'
+                  : 'Informe a nova senha para concluir a recuperação.'}
           </p>
           <form onSubmit={submit} className="space-y-4">
             {mode === 'signup' && (
@@ -93,25 +127,38 @@ export default function Auth() {
                 </div>
               </>
             )}
+            {mode !== 'update_password' && (
+              <div>
+                <Label htmlFor="email">Email</Label>
+                <Input id="email" type="email" value={form.email} onChange={e => setForm({ ...form, email: e.target.value })} />
+              </div>
+            )}
             <div>
-              <Label htmlFor="email">Email</Label>
-              <Input id="email" type="email" value={form.email} onChange={e => setForm({ ...form, email: e.target.value })} />
-            </div>
-            <div>
-              <Label htmlFor="password">Senha</Label>
-              <Input id="password" type="password" value={form.password} onChange={e => setForm({ ...form, password: e.target.value })} />
+              <Label htmlFor="password">{mode === 'update_password' ? 'Nova senha' : 'Senha'}</Label>
+              <Input id="password" type="password" value={form.password} onChange={e => setForm({ ...form, password: e.target.value })} disabled={mode === 'reset'} />
             </div>
             <Button className="w-full" disabled={loading} type="submit">
-              {loading ? '...' : mode === 'login' ? 'Entrar' : 'Criar conta'}
+              {loading ? '...' : mode === 'login' ? 'Entrar' : mode === 'signup' ? 'Criar conta' : mode === 'reset' ? 'Enviar link' : 'Salvar nova senha'}
             </Button>
           </form>
-          <button
-            type="button"
-            onClick={() => setMode(mode === 'login' ? 'signup' : 'login')}
-            className="mt-4 text-sm text-muted-foreground hover:text-foreground w-full text-center"
-          >
-            {mode === 'login' ? 'Não tenho conta — criar agora' : 'Já tenho conta — entrar'}
-          </button>
+          {mode !== 'update_password' && <div className="mt-4 space-y-2">
+            <button
+              type="button"
+              onClick={() => setMode(mode === 'login' ? 'signup' : 'login')}
+              className="text-sm text-muted-foreground hover:text-foreground w-full text-center"
+            >
+              {mode === 'login' ? 'Não tenho conta — criar agora' : 'Já tenho conta — entrar'}
+            </button>
+            {mode !== 'signup' && (
+              <button
+                type="button"
+                onClick={() => setMode(mode === 'reset' ? 'login' : 'reset')}
+                className="text-sm text-muted-foreground hover:text-foreground w-full text-center"
+              >
+                {mode === 'reset' ? 'Voltar para login' : 'Esqueci minha senha'}
+              </button>
+            )}
+          </div>}
         </Card>
       </div>
     </div>

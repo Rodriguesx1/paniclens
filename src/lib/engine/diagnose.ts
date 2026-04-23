@@ -5,8 +5,9 @@
  */
 import type { ParsedLog, RawEvidence } from '@/lib/parser/panicParser';
 import { RULES, RULESET_VERSION, type DiagnosticRule, type RepairTier, type SuggestedAction } from './rules';
+import { MODEL_CALIBRATION_VERSION, resolveCalibration } from './modelCalibration';
 
-export const ENGINE_VERSION = '1.0.0';
+export const ENGINE_VERSION = '2.0.0';
 
 export type ConfidenceLabel = 'low' | 'moderate' | 'high' | 'very_high';
 export type Severity = 'low' | 'moderate' | 'high' | 'critical';
@@ -40,6 +41,7 @@ export type EngineRepairSuggestion = SuggestedAction & {
 export type AnalysisResult = {
   engineVersion: string;
   rulesetVersion: string;
+  modelCalibrationVersion?: string;
   executiveSummary: string;
   primaryCategory: string;
   severity: Severity;
@@ -78,30 +80,40 @@ export function diagnose(parsed: ParsedLog): AnalysisResult {
     evidenceByKey.set(ev.key, arr);
   }
 
-  type Scored = { rule: DiagnosticRule; score: number; hits: RawEvidence[]; combo: boolean; conflicting: RawEvidence[] };
+  type Scored = {
+    rule: DiagnosticRule;
+    score: number;
+    hits: RawEvidence[];
+    combo: boolean;
+    conflicting: RawEvidence[];
+  };
   const scored: Scored[] = [];
 
   for (const rule of RULES) {
+    const includeMode = rule.includeMode ?? 'any';
     const includeHits = rule.includeMatchers.flatMap(k => evidenceByKey.get(k) ?? []);
-    if (includeHits.length === 0) continue;
+    const includeSatisfied =
+      includeMode === 'all'
+        ? rule.includeMatchers.every(k => (evidenceByKey.get(k)?.length ?? 0) > 0)
+        : includeHits.length > 0;
+    if (!includeSatisfied) continue;
 
-    // exclusions
     const conflicts = (rule.excludeMatchers ?? []).flatMap(k => evidenceByKey.get(k) ?? []);
-    if (conflicts.length > 0) continue;
 
     let score = rule.confidenceBase;
-    score += Math.min(20, includeHits.length * 3);
+    score += scoreEvidence(includeHits);
 
     const optionalHits = (rule.optionalMatchers ?? []).flatMap(k => evidenceByKey.get(k) ?? []);
-    if (optionalHits.length > 0) score += Math.min(15, optionalHits.length * 4);
+    if (optionalHits.length > 0) score += Math.min(18, scoreEvidence(optionalHits));
 
     const allOptionalHit =
       (rule.optionalMatchers?.length ?? 0) > 0 &&
       rule.optionalMatchers!.every(k => (evidenceByKey.get(k)?.length ?? 0) > 0);
     if (allOptionalHit && rule.comboBonus) score += rule.comboBonus;
 
+    if (conflicts.length > 0) score -= Math.min(26, scoreEvidence(conflicts));
     score = Math.min(99, Math.max(0, score));
-    scored.push({ rule, score, hits: includeHits.concat(optionalHits), combo: allOptionalHit, conflicting: [] });
+    scored.push({ rule, score, hits: includeHits.concat(optionalHits), combo: allOptionalHit, conflicting: conflicts });
   }
 
   // Detect cross-rule conflicts (e.g., baseband vs front_flex shouldn't be primary together)
@@ -114,6 +126,12 @@ export function diagnose(parsed: ParsedLog): AnalysisResult {
   for (const s of scored) {
     const best = byCategoryBest.get(s.rule.category)!;
     if (s !== best) s.score = Math.max(0, s.score - 8);
+  }
+
+  const topByCategory = [...byCategoryBest.values()];
+  const categoryConflicts = detectCategoryConflicts(topByCategory);
+  for (const s of scored) {
+    if (categoryConflicts.has(s.rule.category)) s.score = Math.max(0, s.score - 7);
   }
 
   // Sort by score
@@ -136,15 +154,21 @@ export function diagnose(parsed: ParsedLog): AnalysisResult {
   let confidence = primary.score;
   if (gap >= 15) confidence = Math.min(99, confidence + 5);
   if (gap < 5 && secondaries[0]) confidence = Math.max(0, confidence - 6);
+  confidence -= Math.min(12, primary.conflicting.length * 4);
+  confidence -= Math.min(10, categoryConflicts.size * 3);
   // Penalize if multiple high-severity but conflicting categories
   const highSevCats = new Set(scored.filter(s => severityRank(s.rule.severityImpact) >= 3 && s.score >= 55).map(s => s.rule.category));
   if (highSevCats.size > 2) confidence = Math.max(30, confidence - 8);
+  confidence = Math.max(0, Math.min(99, confidence));
 
+  const likelyTier = primary.rule.probableRepairTier;
+  const modelCalibration = getModelCalibration(parsed, primary.rule.category);
+  confidence = Math.max(0, Math.min(99, confidence + modelCalibration.confidenceDelta));
   const confidenceLabel = labelForScore(confidence);
   const riskOfMisdiagnosis = Math.max(5, Math.min(95, 100 - confidence + (gap < 5 ? 10 : 0)));
 
-  const likelyTier = primary.rule.probableRepairTier;
-  const boardChance = tierBoardChance(likelyTier);
+  let boardChance = tierBoardChance(likelyTier);
+  boardChance = Math.max(0, Math.min(98, boardChance + modelCalibration.boardChanceDelta));
   const simpleSwapChance = Math.max(2, 100 - boardChance - 5);
 
   // Build evidences output
@@ -164,6 +188,19 @@ export function diagnose(parsed: ParsedLog): AnalysisResult {
         context: ev.context,
       });
     }
+    for (const ev of s.conflicting) {
+      const ck = `${s.rule.id}:conflict:${ev.key}:${ev.matchedText}`;
+      if (seen.has(ck)) continue;
+      seen.add(ck);
+      evidences.push({
+        category: ev.category ?? s.rule.category,
+        evidenceKey: ev.key,
+        matchedText: ev.matchedText,
+        weight: ev.weight ?? Math.max(6, Math.floor(s.rule.evidenceWeight * 0.6)),
+        isConflicting: true,
+        context: ev.context,
+      });
+    }
   }
 
   // Hypotheses
@@ -174,7 +211,7 @@ export function diagnose(parsed: ParsedLog): AnalysisResult {
     isPrimary: idx === 0,
     rank: idx,
     title: s.rule.primaryHypothesis,
-    explanation: s.rule.explanationTemplate.replace('{evidence}', s.hits[0]?.matchedText ?? s.rule.includeMatchers.join(', ')),
+    explanation: buildExplanation(s),
     confidenceScore: idx === 0 ? confidence : s.score,
     suspectedComponents: s.rule.suspectedComponents,
     recommendedTests: s.rule.recommendedTests,
@@ -205,6 +242,7 @@ export function diagnose(parsed: ParsedLog): AnalysisResult {
   for (const s of [primary, ...secondaries]) {
     if (s.rule.riskNotes && !alerts.includes(s.rule.riskNotes)) alerts.push(s.rule.riskNotes);
   }
+  if (modelCalibration.note) alerts.push(modelCalibration.note);
   if (likelyTier === 'high_risk_board_repair') {
     alerts.push('Reparo de placa de alto risco — alinhar custo, prazo e expectativa com o cliente antes de iniciar.');
   }
@@ -220,11 +258,14 @@ export function diagnose(parsed: ParsedLog): AnalysisResult {
 `Hipótese principal: ${primary.rule.primaryHypothesis} ` +
 `Confiança ${confidence}/100 (${confidenceLabel}). ` +
 `Repair tier provável: ${humanTier(likelyTier)}. ` +
-`Chance estimada de troca simples: ${simpleSwapChance}% / chance de board-level: ${boardChance}%.`;
+`Chance estimada de troca simples: ${simpleSwapChance}% / chance de board-level: ${boardChance}%.` +
+(primary.conflicting.length > 0 ? ' Evidências conflitantes detectadas e ponderadas no score final.' : '') +
+(modelCalibration.applied ? ' Calibração contextual por modelo aplicada.' : '');
 
   return {
     engineVersion: ENGINE_VERSION,
     rulesetVersion: RULESET_VERSION,
+    modelCalibrationVersion: MODEL_CALIBRATION_VERSION,
     executiveSummary: summary,
     primaryCategory: primary.rule.category,
     severity: topSev,
@@ -260,6 +301,55 @@ function humanTier(t: RepairTier): string {
 function bencheNotesFor(rule: DiagnosticRule, parsed: ParsedLog): string {
   const proc = parsed.metadata.process ? ` Processo envolvido: ${parsed.metadata.process}.` : '';
   return `Subsistema provável: ${rule.probableSubsystem}.${proc} Iniciar pelas ações de prioridade 1 e parar tentativa cega se as ações 1-3 não evoluírem.`;
+}
+
+function scoreEvidence(evs: RawEvidence[]): number {
+  if (evs.length === 0) return 0;
+  const weighted = evs.reduce((acc, ev) => acc + Math.max(4, ev.weight ?? 10), 0);
+  const diversity = new Set(evs.map(ev => ev.key)).size * 2;
+  return Math.min(24, Math.floor(weighted / 8) + diversity);
+}
+
+function detectCategoryConflicts(scored: Array<{ rule: DiagnosticRule; score: number }>): Set<string> {
+  const set = new Set<string>();
+  const strong = scored.filter(s => s.score >= 58);
+  const groups: string[][] = [
+    ['baseband', 'modem', 'face_id', 'front_flex', 'proximity'],
+    ['nand', 'storage', 'cpu_memory'],
+    ['battery', 'charging', 'dock_flex', 'power', 'rail'],
+  ];
+  for (const g of groups) {
+    const hits = strong.filter(s => g.includes(s.rule.category));
+    if (hits.length > 1) hits.forEach(h => set.add(h.rule.category));
+  }
+  return set;
+}
+
+function buildExplanation(s: { rule: DiagnosticRule; hits: RawEvidence[]; conflicting: RawEvidence[] }): string {
+  const positive = s.hits[0]?.matchedText ?? s.rule.includeMatchers.join(', ');
+  const base = s.rule.explanationTemplate.replace('{evidence}', positive);
+  if (!s.conflicting.length) return base;
+  const conflict = s.conflicting[0]?.matchedText ?? s.rule.excludeMatchers?.join(', ') ?? 'sinal conflitante';
+  return `${base} Evidência conflitante observada: "${conflict}".`;
+}
+
+function getModelCalibration(parsed: ParsedLog, category: string): {
+  applied: boolean;
+  confidenceDelta: number;
+  boardChanceDelta: number;
+  note?: string;
+} {
+  const hw = parsed.metadata.hardwareModel ?? parsed.metadata.productType ?? '';
+  const major = parseIphoneMajor(hw);
+  if (!major) return { applied: false, confidenceDelta: 0, boardChanceDelta: 0 };
+  return resolveCalibration(major, category);
+}
+
+function parseIphoneMajor(hardwareModel: string): number | null {
+  const m = hardwareModel.match(/iphone(\d+),\d+/i);
+  if (!m) return null;
+  const major = Number(m[1]);
+  return Number.isFinite(major) ? major : null;
 }
 
 function buildEmptyResult(parsed: ParsedLog): AnalysisResult {

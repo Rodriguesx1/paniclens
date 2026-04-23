@@ -7,6 +7,7 @@ import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { ArrowLeft, FileText, Activity } from 'lucide-react';
 import { format } from 'date-fns';
+import { toast } from 'sonner';
 
 export default function CaseDetail() {
   const { id } = useParams<{ id: string }>();
@@ -19,18 +20,26 @@ export default function CaseDetail() {
   useEffect(() => {
     if (!id || !currentOrgId) return;
     (async () => {
-      const { data: caseRow } = await supabase.from('cases').select('*').eq('id', id).single();
+      const { data: caseRow, error: caseErr } = await supabase.from('cases')
+        .select('*')
+        .eq('id', id)
+        .eq('org_id', currentOrgId)
+        .single();
+      if (caseErr) {
+        toast.error('Falha ao carregar caso', { description: caseErr.message });
+        return;
+      }
       setC(caseRow);
       if (caseRow?.device_id) {
-        const { data: d } = await supabase.from('devices').select('*').eq('id', caseRow.device_id).single();
+        const { data: d } = await supabase.from('devices').select('*').eq('id', caseRow.device_id).eq('org_id', currentOrgId).single();
         setDevice(d);
       }
       if (caseRow?.customer_id) {
-        const { data: cu } = await supabase.from('customers').select('*').eq('id', caseRow.customer_id).single();
+        const { data: cu } = await supabase.from('customers').select('*').eq('id', caseRow.customer_id).eq('org_id', currentOrgId).single();
         setCustomer(cu);
       }
       const { data: a } = await supabase.from('analysis_results').select('id, primary_category, severity, confidence_score, created_at')
-        .eq('case_id', id).order('created_at', { ascending: false });
+        .eq('case_id', id).eq('org_id', currentOrgId).order('created_at', { ascending: false });
       setAnalyses(a ?? []);
     })();
   }, [id, currentOrgId]);

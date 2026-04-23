@@ -15,7 +15,15 @@ import { toast } from 'sonner';
 import { format } from 'date-fns';
 
 type Org = { id: string; name: string; slug: string; created_at: string };
-type Plan = { id: string; code: string; name: string };
+type Plan = {
+  id: string;
+  code: string;
+  name: string;
+  monthly_analyses_limit: number | null;
+  members_limit: number | null;
+  monthly_price_cents: number;
+  is_public: boolean;
+};
 type License = {
   id: string; org_id: string; plan_id: string; license_key: string; status: string;
   expires_at: string | null; monthly_analyses_limit_override: number | null; created_at: string;
@@ -37,6 +45,7 @@ export default function Admin() {
   const [orgs, setOrgs] = useState<Org[]>([]);
   const [licenses, setLicenses] = useState<License[]>([]);
   const [plans, setPlans] = useState<Plan[]>([]);
+  const [savingPlanId, setSavingPlanId] = useState<string | null>(null);
   const [audit, setAudit] = useState<any[]>([]);
   const [stats, setStats] = useState({ orgs: 0, users: 0, analyses: 0, activeLicenses: 0 });
 
@@ -49,7 +58,7 @@ export default function Admin() {
       const [{ data: o }, { data: l }, { data: p }, { data: a }, { count: usersCount }, { count: analysesCount }] = await Promise.all([
         supabase.from('organizations').select('*').order('created_at', { ascending: false }),
         supabase.from('licenses').select('*').order('created_at', { ascending: false }),
-        supabase.from('plans').select('id, code, name').order('sort_order'),
+        supabase.from('plans').select('id, code, name, monthly_analyses_limit, members_limit, monthly_price_cents, is_public').order('sort_order'),
         supabase.from('audit_log').select('*').order('created_at', { ascending: false }).limit(50),
         supabase.from('profiles').select('id', { count: 'exact', head: true }),
         supabase.from('analysis_results').select('id', { count: 'exact', head: true }),
@@ -69,6 +78,8 @@ export default function Admin() {
       supabase.from('licenses').select('*').order('created_at', { ascending: false }),
     ]);
     setOrgs((o ?? []) as any); setLicenses((l ?? []) as any);
+    const { data: p } = await supabase.from('plans').select('id, code, name, monthly_analyses_limit, members_limit, monthly_price_cents, is_public').order('sort_order');
+    setPlans((p ?? []) as any);
   }
 
   async function issueLicense() {
@@ -103,6 +114,37 @@ export default function Admin() {
       payload: { from: lic.status, to: status },
     });
     toast.success(`Licença ${status}`); reload();
+  }
+
+  async function savePlan(plan: Plan) {
+    setSavingPlanId(plan.id);
+    const { error } = await supabase.from('plans').update({
+      monthly_analyses_limit: plan.monthly_analyses_limit,
+      members_limit: plan.members_limit,
+      monthly_price_cents: plan.monthly_price_cents,
+      is_public: plan.is_public,
+    }).eq('id', plan.id);
+    if (error) {
+      toast.error('Falha ao salvar plano', { description: error.message });
+      setSavingPlanId(null);
+      return;
+    }
+    await supabase.from('audit_log').insert({
+      org_id: memberships[0]?.org_id ?? null,
+      user_id: user?.id,
+      action: 'plan_updated',
+      entity: 'plan',
+      payload: {
+        plan_id: plan.id,
+        code: plan.code,
+        monthly_analyses_limit: plan.monthly_analyses_limit,
+        members_limit: plan.members_limit,
+        monthly_price_cents: plan.monthly_price_cents,
+        is_public: plan.is_public,
+      },
+    });
+    toast.success(`Plano ${plan.name} atualizado`);
+    setSavingPlanId(null);
   }
 
   return (
@@ -191,10 +233,49 @@ export default function Admin() {
             {plans.map(p => (
               <div key={p.id} className="border border-border rounded-lg p-3">
                 <div className="font-semibold flex items-center gap-2">{p.name} <Badge variant="outline" className="text-[10px] font-mono">{p.code}</Badge></div>
+                <div className="grid grid-cols-2 gap-2 mt-3">
+                  <div>
+                    <Label className="text-[11px]">Análises/mês</Label>
+                    <Input
+                      type="number"
+                      value={p.monthly_analyses_limit ?? ''}
+                      onChange={e => setPlans(prev => prev.map(x => x.id === p.id ? { ...x, monthly_analyses_limit: e.target.value === '' ? null : parseInt(e.target.value, 10) } : x))}
+                    />
+                  </div>
+                  <div>
+                    <Label className="text-[11px]">Membros</Label>
+                    <Input
+                      type="number"
+                      value={p.members_limit ?? ''}
+                      onChange={e => setPlans(prev => prev.map(x => x.id === p.id ? { ...x, members_limit: e.target.value === '' ? null : parseInt(e.target.value, 10) } : x))}
+                    />
+                  </div>
+                  <div>
+                    <Label className="text-[11px]">Preço mensal (centavos)</Label>
+                    <Input
+                      type="number"
+                      value={p.monthly_price_cents}
+                      onChange={e => setPlans(prev => prev.map(x => x.id === p.id ? { ...x, monthly_price_cents: Math.max(0, parseInt(e.target.value || '0', 10)) } : x))}
+                    />
+                  </div>
+                  <div>
+                    <Label className="text-[11px]">Público</Label>
+                    <Select value={p.is_public ? 'yes' : 'no'} onValueChange={v => setPlans(prev => prev.map(x => x.id === p.id ? { ...x, is_public: v === 'yes' } : x))}>
+                      <SelectTrigger><SelectValue /></SelectTrigger>
+                      <SelectContent>
+                        <SelectItem value="yes">Sim</SelectItem>
+                        <SelectItem value="no">Não</SelectItem>
+                      </SelectContent>
+                    </Select>
+                  </div>
+                </div>
+                <Button size="sm" className="mt-3" onClick={() => savePlan(p)} disabled={savingPlanId === p.id}>
+                  {savingPlanId === p.id ? 'Salvando…' : 'Salvar plano'}
+                </Button>
               </div>
             ))}
           </div>
-          <p className="text-xs text-muted-foreground mt-3 flex items-center gap-2"><BookOpen className="h-3 w-3" /> Edição inline de planos virá em release dedicado.</p>
+          <p className="text-xs text-muted-foreground mt-3 flex items-center gap-2"><BookOpen className="h-3 w-3" /> Alterações registradas em auditoria automaticamente.</p>
         </Card>
       )}
 

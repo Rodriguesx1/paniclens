@@ -52,20 +52,29 @@ export default function AnalysisView() {
   const [parsedMeta, setParsedMeta] = useState<any>(null);
   const [similar, setSimilar] = useState<SimilarCase[]>([]);
   const [orgName, setOrgName] = useState<string>('');
+  const modelCalibrationVersion = analysis?.full_payload?.modelCalibrationVersion as string | undefined;
 
   useEffect(() => {
     if (!id || !currentOrgId) return;
     (async () => {
-      const { data: a } = await supabase.from('analysis_results').select('*').eq('id', id).single();
-      if (!a) return;
+      const { data: a, error: aErr } = await supabase
+        .from('analysis_results')
+        .select('*')
+        .eq('id', id)
+        .eq('org_id', currentOrgId)
+        .single();
+      if (aErr || !a) {
+        toast.error('Falha ao carregar análise', { description: aErr?.message ?? 'análise não encontrada' });
+        return;
+      }
       setAnalysis(a as any);
       const [{ data: h }, { data: e }, { data: s }, { data: c }, { data: log }, { data: parsed }] = await Promise.all([
-        supabase.from('diagnostic_hypotheses').select('*').eq('analysis_id', id).order('rank'),
-        supabase.from('diagnostic_evidences').select('*').eq('analysis_id', id),
-        supabase.from('repair_suggestions').select('*').eq('analysis_id', id).order('priority'),
-        supabase.from('cases').select('title, reported_defect, status').eq('id', a.case_id).single(),
-        supabase.from('panic_logs').select('raw_content, filename').eq('id', a.panic_log_id).single(),
-        supabase.from('parsed_logs').select('metadata').eq('panic_log_id', a.panic_log_id).single(),
+        supabase.from('diagnostic_hypotheses').select('*').eq('analysis_id', id).eq('org_id', currentOrgId).order('rank'),
+        supabase.from('diagnostic_evidences').select('*').eq('analysis_id', id).eq('org_id', currentOrgId),
+        supabase.from('repair_suggestions').select('*').eq('analysis_id', id).eq('org_id', currentOrgId).order('priority'),
+        supabase.from('cases').select('title, reported_defect, status').eq('id', a.case_id).eq('org_id', currentOrgId).single(),
+        supabase.from('panic_logs').select('raw_content, filename').eq('id', a.panic_log_id).eq('org_id', currentOrgId).single(),
+        supabase.from('parsed_logs').select('metadata').eq('panic_log_id', a.panic_log_id).eq('org_id', currentOrgId).single(),
       ]);
       setHypotheses((h ?? []) as any); setEvidences((e ?? []) as any); setSuggestions((s ?? []) as any);
       setCaseInfo(c ?? null); setLogInfo(log ?? null); setParsedMeta(parsed?.metadata ?? null);
@@ -98,6 +107,7 @@ export default function AnalysisView() {
         createdAt: analysis.created_at,
         engineVersion: analysis.engine_version,
         rulesetVersion: analysis.ruleset_version,
+        modelCalibrationVersion: analysis.full_payload?.modelCalibrationVersion ?? null,
         executiveSummary: analysis.executive_summary,
         primaryCategory: analysis.primary_category,
         severity: analysis.severity,
@@ -139,7 +149,10 @@ export default function AnalysisView() {
           <Button asChild variant="ghost" size="sm"><Link to={`/app/cases/${analysis.case_id}`}><ArrowLeft className="h-4 w-4 mr-1" /> Caso</Link></Button>
           <div>
             <h1 className="text-2xl font-semibold tracking-tight">{caseInfo?.title ?? 'Análise'}</h1>
-            <p className="text-xs text-muted-foreground">Engine v{analysis.engine_version} · Ruleset v{analysis.ruleset_version}</p>
+            <p className="text-xs text-muted-foreground">
+              Engine v{analysis.engine_version} · Ruleset v{analysis.ruleset_version}
+              {modelCalibrationVersion ? ` · Model calibration v${modelCalibrationVersion}` : ''}
+            </p>
           </div>
         </div>
         <div className="flex items-center gap-2">

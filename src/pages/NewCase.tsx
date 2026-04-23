@@ -134,30 +134,33 @@ export default function NewCase() {
 
       // Hypotheses
       if (result.hypotheses.length) {
-        await supabase.from('diagnostic_hypotheses').insert(result.hypotheses.map(h => ({
+        const { error: hErr } = await supabase.from('diagnostic_hypotheses').insert(result.hypotheses.map(h => ({
           analysis_id: analysisRow.id, org_id: currentOrgId,
           rule_id: h.ruleId, rule_version: h.ruleVersion, category: h.category as any,
           is_primary: h.isPrimary, title: h.title, explanation: h.explanation,
           confidence_score: h.confidenceScore, suspected_components: h.suspectedComponents as any, rank: h.rank,
         })));
+        if (hErr) throw hErr;
       }
       // Evidences
       if (result.evidences.length) {
-        await supabase.from('diagnostic_evidences').insert(result.evidences.map(e => ({
+        const { error: eErr } = await supabase.from('diagnostic_evidences').insert(result.evidences.map(e => ({
           analysis_id: analysisRow.id, org_id: currentOrgId,
           category: e.category as any, evidence_key: e.evidenceKey, matched_text: e.matchedText,
           weight: e.weight, is_conflicting: e.isConflicting, context: e.context,
         })));
+        if (eErr) throw eErr;
       }
       // Suggestions
       if (result.suggestions.length) {
-        await supabase.from('repair_suggestions').insert(result.suggestions.map(s => ({
+        const { error: sErr } = await supabase.from('repair_suggestions').insert(result.suggestions.map(s => ({
           analysis_id: analysisRow.id, org_id: currentOrgId,
           action_title: s.actionTitle, action_type: s.actionType, priority: s.priority,
           difficulty: s.difficulty, estimated_cost: s.estimatedCost, estimated_time: s.estimatedTime,
           technical_risk: s.technicalRisk, expected_resolution_chance: s.expectedResolutionChance,
           why_this_action: s.whyThisAction, when_to_escalate: s.whenToEscalate,
         })));
+        if (sErr) throw sErr;
       }
 
       // Registrar consumo da licença (best-effort, não bloqueia)

@@ -13,12 +13,20 @@ export default function Customers() {
   const { currentOrgId } = useAuth();
   const [rows, setRows] = useState<Customer[]>([]);
   const [form, setForm] = useState({ name: '', email: '', phone: '' });
+  const [loading, setLoading] = useState(true);
 
   useEffect(() => { reload(); /* eslint-disable-next-line */ }, [currentOrgId]);
   async function reload() {
-    if (!currentOrgId) return;
-    const { data } = await supabase.from('customers').select('id, name, email, phone').eq('org_id', currentOrgId).order('created_at', { ascending: false });
+    if (!currentOrgId) { setLoading(false); return; }
+    setLoading(true);
+    const { data, error } = await supabase.from('customers').select('id, name, email, phone').eq('org_id', currentOrgId).order('created_at', { ascending: false });
+    if (error) {
+      toast.error('Falha ao carregar clientes', { description: error.message });
+      setLoading(false);
+      return;
+    }
     setRows(data ?? []);
+    setLoading(false);
   }
   async function add() {
     if (!form.name.trim() || !currentOrgId) return;
@@ -43,7 +51,7 @@ export default function Customers() {
         </div>
       </Card>
       <Card className="panel">
-        {rows.length === 0
+        {loading ? <div className="p-10 text-center text-sm text-muted-foreground">Carregando clientes…</div> : rows.length === 0
           ? <div className="p-10 text-center text-sm text-muted-foreground">Nenhum cliente cadastrado.</div>
           : <div className="divide-y divide-border">
               {rows.map(r => (

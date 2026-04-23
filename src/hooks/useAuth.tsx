@@ -10,11 +10,12 @@ type AuthCtx = {
   loading: boolean;
   currentOrgId: string | null;
   memberships: OrgMembership[];
+  setCurrentOrgId: (orgId: string | null) => void;
   signOut: () => Promise<void>;
 };
 
 const AuthContext = createContext<AuthCtx>({
-  user: null, session: null, loading: true, currentOrgId: null, memberships: [], signOut: async () => {},
+  user: null, session: null, loading: true, currentOrgId: null, memberships: [], setCurrentOrgId: () => {}, signOut: async () => {},
 });
 
 export function AuthProvider({ children }: { children: ReactNode }) {
@@ -29,15 +30,18 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       setSession(sess);
       setUser(sess?.user ?? null);
       if (sess?.user) {
+        setLoading(true);
         setTimeout(() => loadMemberships(sess.user.id), 0);
       } else {
-        setMemberships([]); setCurrentOrgId(null);
+        setMemberships([]);
+        setCurrentOrgId(null);
+        setLoading(false);
       }
     });
-    supabase.auth.getSession().then(({ data }) => {
+    supabase.auth.getSession().then(async ({ data }) => {
       setSession(data.session); setUser(data.session?.user ?? null);
-      if (data.session?.user) loadMemberships(data.session.user.id);
-      setLoading(false);
+      if (data.session?.user) await loadMemberships(data.session.user.id);
+      else setLoading(false);
     });
     return () => sub.subscription.unsubscribe();
   }, []);
@@ -48,8 +52,14 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       setMemberships(data);
       const stored = localStorage.getItem('paniclens.org');
       const orgIds = [...new Set(data.map(m => m.org_id))];
-      setCurrentOrgId(stored && orgIds.includes(stored) ? stored : orgIds[0]);
+      const selected = stored && orgIds.includes(stored) ? stored : orgIds[0];
+      setCurrentOrgId(selected);
+      localStorage.setItem('paniclens.org', selected);
+    } else {
+      setMemberships([]);
+      setCurrentOrgId(null);
     }
+    setLoading(false);
   }
 
   async function signOut() {
@@ -58,7 +68,19 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   }
 
   return (
-    <AuthContext.Provider value={{ user, session, loading, currentOrgId, memberships, signOut }}>
+    <AuthContext.Provider value={{
+      user,
+      session,
+      loading,
+      currentOrgId,
+      memberships,
+      setCurrentOrgId: (orgId) => {
+        setCurrentOrgId(orgId);
+        if (orgId) localStorage.setItem('paniclens.org', orgId);
+        else localStorage.removeItem('paniclens.org');
+      },
+      signOut,
+    }}>
       {children}
     </AuthContext.Provider>
   );

@@ -27,7 +27,7 @@ const FEATURE_LABEL: Record<string, string> = {
 };
 
 export default function Billing() {
-  const { currentOrgId } = useAuth();
+  const { currentOrgId, user } = useAuth();
   const { license, used, remaining } = useLicense();
   const [plans, setPlans] = useState<Plan[]>([]);
 
@@ -38,6 +38,27 @@ export default function Billing() {
 
   const limit = license?.monthly_analyses_limit;
   const pct = limit && limit > 0 ? Math.min(100, Math.round((used / limit) * 100)) : 0;
+
+  async function requestPlan(plan: Plan) {
+    if (!currentOrgId || !user) {
+      toast.error('Sessão inválida para solicitar plano.');
+      return;
+    }
+    const { error } = await supabase.from('audit_log').insert({
+      org_id: currentOrgId,
+      user_id: user.id,
+      action: 'billing_plan_requested',
+      entity: 'plan',
+      payload: { requested_plan_code: plan.code, requested_plan_name: plan.name },
+    });
+    if (error) {
+      toast.error('Falha ao registrar solicitação', { description: error.message });
+      return;
+    }
+    toast.success('Solicitação registrada', {
+      description: `Pedido de upgrade para ${plan.name} enviado ao time comercial.`,
+    });
+  }
 
   return (
     <div className="space-y-8 max-w-6xl">
@@ -112,7 +133,7 @@ export default function Billing() {
                   ))}
                 </ul>
                 <Button className="mt-4 w-full" variant={isActive ? 'outline' : 'default'} disabled={isActive}
-                  onClick={() => !isActive && toast.info('Solicite uma licença', { description: 'Entre em contato comercial — emitiremos a chave para sua organização.' })}>
+                  onClick={() => !isActive && requestPlan(p)}>
                   {isActive ? 'Plano atual' : 'Solicitar'}
                 </Button>
               </Card>

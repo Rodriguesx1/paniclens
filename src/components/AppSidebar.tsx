@@ -6,6 +6,7 @@ import {
 } from '@/components/ui/sidebar';
 import { useAuth } from '@/hooks/useAuth';
 import { Button } from '@/components/ui/button';
+import { ENGINE_VERSION } from '@/lib/engine/diagnose';
 
 const items = [
   { title: 'Dashboard', url: '/app', icon: LayoutDashboard, end: true },
@@ -87,7 +88,7 @@ export function AppSidebar() {
         </Button>
         {!collapsed && (
           <div className="mt-2 flex items-center gap-1 px-1 text-[10px] text-muted-foreground">
-            <Sparkles className="h-3 w-3 text-primary" /> Engine v1.0.0
+            <Sparkles className="h-3 w-3 text-primary" /> Engine v{ENGINE_VERSION}
           </div>
         )}
       </SidebarFooter>

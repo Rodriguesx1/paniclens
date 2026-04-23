@@ -6,7 +6,7 @@
  * Produces a normalized structure consumed by the Rules Engine.
  */
 
-export const PARSER_VERSION = '1.0.0';
+export const PARSER_VERSION = '2.0.0';
 
 export type RawEvidence = {
   key: string;            // canonical key, e.g. "thermalmonitord_no_checkins"
@@ -37,6 +37,13 @@ export type ParsedLog = {
   metadata: ParsedMetadata;
   detectedCategories: string[];
   rawEvidences: RawEvidence[];
+  structured: {
+    missingSensors: string[];
+    watchdogTargets: string[];
+    panicSignatures: string[];
+    processHints: string[];
+    subsystemHints: string[];
+  };
   normalizedText: string;       // lowercased, line-normalized
   lines: string[];
 };
@@ -259,11 +266,34 @@ export function parsePanicLog(input: string): ParsedLog {
     detectedCats.add(inferCategoryFromProcess(proc));
   }
 
+  const missingSensors = extractMissingSensors(search);
+  for (const sensor of missingSensors) {
+    pushEvidence(evidences, {
+      key: 'missing_sensor_name',
+      matchedText: sensor,
+      context: `missing_sensor=${sensor}`,
+      category: 'sensors',
+      weight: 12,
+    });
+    detectedCats.add('sensors');
+  }
+
+  const panicSignatures = extractPanicSignatures(search);
+  const processHints = extractProcessHints(search, meta);
+  const subsystemHints = inferSubsystemHints({ missingSensors, processHints, panicSignatures });
+
   return {
     parserVersion: PARSER_VERSION,
     metadata: meta,
     detectedCategories: [...detectedCats],
     rawEvidences: evidences,
+    structured: {
+      missingSensors,
+      watchdogTargets: wdogMatches.map(m => m[1]).filter(Boolean),
+      panicSignatures,
+      processHints,
+      subsystemHints,
+    },
     normalizedText: search.toLowerCase(),
     lines,
   };
@@ -279,4 +309,72 @@ function inferCategoryFromProcess(proc: string): string {
   if (p.includes('battery') || p.includes('gas')) return 'battery';
   if (p.includes('sep')) return 'cpu_memory';
   return 'watchdog';
+}
+
+function extractMissingSensors(text: string): string[] {
+  const sensors = new Set<string>();
+  const generic = [...text.matchAll(/missing sensor\(s\)?:?\s*([^\n]+)/gi)];
+  for (const m of generic) {
+    const rhs = (m[1] ?? '').trim();
+    if (!rhs) continue;
+    rhs
+      .split(/[,\s]+/)
+      .map(s => s.trim().toLowerCase())
+      .filter(Boolean)
+      .forEach(s => sensors.add(s));
+  }
+  const specific = [...text.matchAll(/\b(sensor(?:[_\s-]?[a-z0-9]+)|mic\d|prs\d|tg\d{1,2}[a-z]?)\b/gi)];
+  for (const m of specific) sensors.add(m[1].toLowerCase());
+  return [...sensors].slice(0, 24);
+}
+
+function extractPanicSignatures(text: string): string[] {
+  const out = new Set<string>();
+  const regexes = [
+    /panic\(cpu \d+ caller [^\)]+\):\s*([^\n]+)/gi,
+    /panicString["']?\s*[:=]\s*["']([^"']+)["']/gi,
+    /panic reason:\s*([^\n]+)/gi,
+    /userspace watchdog timeout:\s*([^\n]+)/gi,
+  ];
+  for (const re of regexes) {
+    for (const m of text.matchAll(re)) {
+      const hit = (m[1] ?? '').trim();
+      if (hit) out.add(hit.slice(0, 180));
+    }
+  }
+  return [...out].slice(0, 12);
+}
+
+function extractProcessHints(text: string, meta: ParsedMetadata): string[] {
+  const hints = new Set<string>();
+  if (meta.process) hints.add(meta.process.toLowerCase());
+  if (meta.responsibleProcess) hints.add(meta.responsibleProcess.toLowerCase());
+  for (const m of text.matchAll(/(?:process|responsible process):\s*([^\n]+)/gi)) {
+    const p = (m[1] ?? '').trim().toLowerCase();
+    if (p) hints.add(p);
+  }
+  for (const m of text.matchAll(/no successful checkins from ([\w\.\-]+)/gi)) {
+    const p = (m[1] ?? '').trim().toLowerCase();
+    if (p) hints.add(p);
+  }
+  return [...hints].slice(0, 16);
+}
+
+function inferSubsystemHints(input: { missingSensors: string[]; processHints: string[]; panicSignatures: string[] }): string[] {
+  const hints = new Set<string>();
+  const joined = `${input.missingSensors.join(' ')} ${input.processHints.join(' ')} ${input.panicSignatures.join(' ')}`.toLowerCase();
+  const matchers: Array<[RegExp, string]> = [
+    [/thermal|tg\d|prs\d|mic\d/, 'thermal_sensors'],
+    [/biometric|pearl|truedepth|face[_ ]?id/, 'face_id'],
+    [/camera|isp/, 'camera_isp'],
+    [/audio|codec|speaker/, 'audio_codec'],
+    [/baseband|commcenter|modem|qmi/, 'baseband_modem'],
+    [/nand|nvme|apfs|storage/, 'storage'],
+    [/battery|gasgauge|charging|tristar|hydra/, 'battery_charging'],
+    [/i2c|spmi|spi/, 'peripheral_bus'],
+  ];
+  for (const [re, label] of matchers) {
+    if (re.test(joined)) hints.add(label);
+  }
+  return [...hints];
 }

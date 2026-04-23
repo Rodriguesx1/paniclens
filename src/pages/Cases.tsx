@@ -9,6 +9,7 @@ import { Badge } from '@/components/ui/badge';
 import { FilePlus2, Search } from 'lucide-react';
 import { formatDistanceToNow } from 'date-fns';
 import { ptBR } from 'date-fns/locale';
+import { toast } from 'sonner';
 
 type Row = { id: string; title: string; status: string; created_at: string; reported_defect: string };
 
@@ -16,15 +17,28 @@ export default function Cases() {
   const { currentOrgId } = useAuth();
   const [rows, setRows] = useState<Row[]>([]);
   const [q, setQ] = useState('');
+  const [loading, setLoading] = useState(true);
 
   useEffect(() => {
-    if (!currentOrgId) return;
+    if (!currentOrgId) { setLoading(false); return; }
+    setLoading(true);
     supabase.from('cases').select('id, title, status, created_at, reported_defect')
       .eq('org_id', currentOrgId).order('created_at', { ascending: false }).limit(200)
-      .then(({ data }) => setRows(data ?? []));
+      .then(({ data, error }) => {
+        if (error) {
+          toast.error('Falha ao carregar casos', { description: error.message });
+          return;
+        }
+        setRows(data ?? []);
+      })
+      .finally(() => setLoading(false));
   }, [currentOrgId]);
 
-  const filtered = rows.filter(r => !q || r.title.toLowerCase().includes(q.toLowerCase()));
+  const filtered = rows.filter(r => {
+    if (!q) return true;
+    const needle = q.toLowerCase();
+    return r.title.toLowerCase().includes(needle) || (r.reported_defect ?? '').toLowerCase().includes(needle);
+  });
 
   return (
     <div className="space-y-6">
@@ -40,7 +54,7 @@ export default function Cases() {
         <Input className="pl-9" placeholder="Buscar por título…" value={q} onChange={e => setQ(e.target.value)} />
       </div>
       <Card className="panel">
-        {filtered.length === 0
+        {loading ? <div className="p-10 text-center text-muted-foreground text-sm">Carregando casos…</div> : filtered.length === 0
           ? <div className="p-10 text-center text-muted-foreground text-sm">Nenhum caso encontrado.</div>
           : <div className="divide-y divide-border">
               {filtered.map(r => (

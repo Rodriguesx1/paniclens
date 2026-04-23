@@ -2,12 +2,14 @@ import { useEffect, useMemo, useState } from 'react';
 import { Link } from 'react-router-dom';
 import { useAuth } from '@/hooks/useAuth';
 import { supabase } from '@/integrations/supabase/client';
+import { useLicense } from '@/hooks/useLicense';
 import { Button } from '@/components/ui/button';
 import { Card } from '@/components/ui/card';
 import { FilePlus2, FolderOpen, Activity, AlertTriangle, TrendingUp, Wrench, BookOpen } from 'lucide-react';
 import { formatDistanceToNow, subDays, format, startOfDay } from 'date-fns';
 import { ptBR } from 'date-fns/locale';
 import { LineChart, Line, XAxis, YAxis, ResponsiveContainer, Tooltip, BarChart, Bar, Cell } from 'recharts';
+import { toast } from 'sonner';
 
 type CaseRow = { id: string; title: string; status: string; created_at: string };
 type AnalysisRow = { id: string; case_id: string; primary_category: string; severity: string; confidence_score: number; likely_repair_tier: string; created_at: string };
@@ -16,25 +18,35 @@ const SEVERITY_COLOR: Record<string, string> = { low: 'hsl(var(--success))', mod
 
 export default function Dashboard() {
   const { currentOrgId } = useAuth();
+  const { hasFeature } = useLicense();
   const [stats, setStats] = useState({ total: 0, month: 0, critical: 0, avgConfidence: 0 });
   const [recentCases, setRecentCases] = useState<CaseRow[]>([]);
   const [analyses, setAnalyses] = useState<AnalysisRow[]>([]);
+  const [loading, setLoading] = useState(true);
 
   useEffect(() => {
-    if (!currentOrgId) return;
+    if (!currentOrgId) { setLoading(false); return; }
     (async () => {
+      setLoading(true);
       const since = subDays(new Date(), 30);
-      const [{ count: total }, { data: monthAnalyses }, { data: cases }] = await Promise.all([
+      const [{ count: total, error: totalErr }, { data: monthAnalyses, error: monthErr }, { data: cases, error: casesErr }] = await Promise.all([
         supabase.from('cases').select('id', { count: 'exact', head: true }).eq('org_id', currentOrgId),
         supabase.from('analysis_results').select('id, case_id, primary_category, severity, confidence_score, likely_repair_tier, created_at').eq('org_id', currentOrgId).gte('created_at', since.toISOString()).order('created_at'),
         supabase.from('cases').select('id, title, status, created_at').eq('org_id', currentOrgId).order('created_at', { ascending: false }).limit(6),
       ]);
+      const err = totalErr ?? monthErr ?? casesErr;
+      if (err) {
+        toast.error('Falha ao carregar dashboard', { description: err.message });
+        setLoading(false);
+        return;
+      }
       const list = (monthAnalyses ?? []) as AnalysisRow[];
       const critical = list.filter(a => a.severity === 'critical').length;
       const avg = list.length ? Math.round(list.reduce((s, a) => s + a.confidence_score, 0) / list.length) : 0;
       setStats({ total: total ?? 0, month: list.length, critical, avgConfidence: avg });
       setRecentCases((cases ?? []) as any);
       setAnalyses(list);
+      setLoading(false);
     })();
   }, [currentOrgId]);
 
@@ -65,6 +77,7 @@ export default function Dashboard() {
     for (const a of analyses) t[a.likely_repair_tier] = (t[a.likely_repair_tier] ?? 0) + 1;
     return Object.entries(t).map(([k, v]) => ({ tier: k.replace(/_/g, ' '), n: v }));
   }, [analyses]);
+  const showAdvanced = hasFeature('advanced_dashboard');
 
   return (
     <div className="space-y-8">
@@ -85,7 +98,9 @@ export default function Dashboard() {
         <Stat icon={AlertTriangle} label="Críticas (30d)" value={stats.critical} danger />
         <Stat icon={TrendingUp} label="Confiança média" value={`${stats.avgConfidence}/100`} />
       </div>
+      {loading && <Card className="panel p-5 text-sm text-muted-foreground">Carregando métricas e séries…</Card>}
 
+      {showAdvanced && (
       <div className="grid lg:grid-cols-3 gap-4">
         <Card className="panel p-5 lg:col-span-2">
           <h3 className="font-semibold mb-4 flex items-center gap-2"><Activity className="h-4 w-4 text-primary" /> Análises por dia</h3>
@@ -117,7 +132,9 @@ export default function Dashboard() {
           </div>
         </Card>
       </div>
+      )}
 
+      {showAdvanced && (
       <div className="grid lg:grid-cols-2 gap-4">
         <Card className="panel p-5">
           <h3 className="font-semibold mb-4">Top categorias diagnósticas</h3>
@@ -157,6 +174,7 @@ export default function Dashboard() {
           )}
         </Card>
       </div>
+      )}
 
       <Card className="panel p-5">
         <div className="flex items-center justify-between mb-4">

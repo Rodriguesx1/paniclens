@@ -16,6 +16,7 @@ export type ReportInput = {
   createdAt: string;
   engineVersion: string;
   rulesetVersion: string;
+  modelCalibrationVersion?: string | null;
 
   executiveSummary: string;
   primaryCategory: string;
@@ -61,7 +62,12 @@ export function generateAnalysisPdf(input: ReportInput): jsPDF {
   doc.setFont('helvetica', 'normal');
   doc.text('iOS panic intelligence · relatório técnico', margin, 50);
   doc.setFontSize(8);
-  const meta = `Engine v${input.engineVersion} · Ruleset v${input.rulesetVersion} · ${new Date(input.createdAt).toLocaleString('pt-BR')}`;
+  const metaVersion = [
+    `Engine v${input.engineVersion}`,
+    `Ruleset v${input.rulesetVersion}`,
+    input.modelCalibrationVersion ? `Model calibration v${input.modelCalibrationVersion}` : null,
+  ].filter(Boolean).join(' · ');
+  const meta = `${metaVersion} · ${new Date(input.createdAt).toLocaleString('pt-BR')}`;
   doc.text(meta, pageW - margin, 32, { align: 'right' });
   if (input.organizationName) {
     doc.text(input.organizationName, pageW - margin, 50, { align: 'right' });
