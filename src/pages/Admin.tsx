@@ -96,7 +96,7 @@ export default function Admin() {
   }
 
   async function setLicenseStatus(lic: License, status: string) {
-    const { error } = await supabase.from('licenses').update({ status }).eq('id', lic.id);
+    const { error } = await supabase.from('licenses').update({ status: status as any }).eq('id', lic.id);
     if (error) { toast.error(error.message); return; }
     await supabase.from('audit_log').insert({
       org_id: lic.org_id, user_id: user?.id, action: 'license_status_changed', entity: 'license', entity_id: lic.id,
