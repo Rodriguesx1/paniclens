@@ -5,7 +5,10 @@ import { supabase } from '@/integrations/supabase/client';
 import { Card } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
-import { ArrowLeft, AlertTriangle, ShieldCheck, Wrench, FlaskConical, ChevronRight, Cpu, Microscope, Activity } from 'lucide-react';
+import { ArrowLeft, AlertTriangle, ShieldCheck, Wrench, FlaskConical, ChevronRight, Cpu, Microscope, Activity, FileDown, BookOpen, GitCompare } from 'lucide-react';
+import { generateAnalysisPdf } from '@/lib/report/generatePdf';
+import { findSimilarCases, type SimilarCase } from '@/lib/similarity/findSimilarCases';
+import { toast } from 'sonner';
 
 type AnalysisFull = {
   id: string; case_id: string; executive_summary: string;
@@ -47,6 +50,8 @@ export default function AnalysisView() {
   const [caseInfo, setCaseInfo] = useState<CaseInfo | null>(null);
   const [logInfo, setLogInfo] = useState<LogInfo | null>(null);
   const [parsedMeta, setParsedMeta] = useState<any>(null);
+  const [similar, setSimilar] = useState<SimilarCase[]>([]);
+  const [orgName, setOrgName] = useState<string>('');
 
   useEffect(() => {
     if (!id || !currentOrgId) return;
@@ -64,8 +69,63 @@ export default function AnalysisView() {
       ]);
       setHypotheses((h ?? []) as any); setEvidences((e ?? []) as any); setSuggestions((s ?? []) as any);
       setCaseInfo(c ?? null); setLogInfo(log ?? null); setParsedMeta(parsed?.metadata ?? null);
+
+      // Similares + nome da org (em paralelo, não-bloqueantes)
+      findSimilarCases({
+        orgId: currentOrgId,
+        excludeAnalysisId: a.id,
+        category: a.primary_category,
+        severity: a.severity,
+        components: (a.suspected_components as string[]) ?? [],
+      }).then(setSimilar).catch(() => {});
+      supabase.from('organizations').select('name').eq('id', currentOrgId).single()
+        .then(({ data }) => setOrgName(data?.name ?? ''));
     })();
   }, [id, currentOrgId]);
+
+  function handleExportPdf() {
+    if (!analysis) return;
+    try {
+      const primary = hypotheses.find(h => h.is_primary);
+      const doc = generateAnalysisPdf({
+        caseTitle: caseInfo?.title ?? 'Análise',
+        caseStatus: caseInfo?.status,
+        reportedDefect: caseInfo?.reported_defect ?? null,
+        customerName: parsedMeta?.customerName ?? null,
+        deviceModel: parsedMeta?.product ?? parsedMeta?.deviceModel ?? null,
+        deviceSerial: parsedMeta?.serial ?? null,
+        iosVersion: parsedMeta?.osVersion ?? parsedMeta?.iosVersion ?? null,
+        createdAt: analysis.created_at,
+        engineVersion: analysis.engine_version,
+        rulesetVersion: analysis.ruleset_version,
+        executiveSummary: analysis.executive_summary,
+        primaryCategory: analysis.primary_category,
+        severity: analysis.severity,
+        confidenceScore: analysis.confidence_score,
+        confidenceLabel: analysis.confidence_label,
+        riskOfMisdiagnosis: analysis.risk_of_misdiagnosis,
+        likelyRepairTier: analysis.likely_repair_tier,
+        simpleSwapChance: analysis.likely_simple_swap_chance,
+        boardRepairChance: analysis.likely_board_repair_chance,
+        suspectedComponents: analysis.suspected_components ?? [],
+        technicalAlerts: analysis.technical_alerts ?? [],
+        testSequence: analysis.recommended_test_sequence ?? [],
+        primaryHypothesis: primary ? { title: primary.title, explanation: primary.explanation, confidence: primary.confidence_score } : null,
+        secondaryHypotheses: hypotheses.filter(h => !h.is_primary).map(h => ({ title: h.title, category: h.category, confidence: h.confidence_score })),
+        evidences: evidences.map(e => ({ category: e.category, matchedText: e.matched_text, weight: e.weight })),
+        suggestions: suggestions.map(s => ({
+          title: s.action_title, type: s.action_type, difficulty: s.difficulty, risk: s.technical_risk,
+          resolveChance: s.expected_resolution_chance, why: s.why_this_action, whenToEscalate: s.when_to_escalate,
+        })),
+        organizationName: orgName,
+      });
+      const safeName = (caseInfo?.title ?? 'analise').replace(/[^a-z0-9-_]+/gi, '_').slice(0, 40);
+      doc.save(`paniclens_${safeName}_${analysis.id.slice(0, 6)}.pdf`);
+      toast.success('PDF gerado');
+    } catch (err: any) {
+      toast.error('Falha ao gerar PDF', { description: err?.message ?? 'erro desconhecido' });
+    }
+  }
 
   if (!analysis) return <div className="text-muted-foreground">Carregando análise…</div>;
 
@@ -82,7 +142,13 @@ export default function AnalysisView() {
             <p className="text-xs text-muted-foreground">Engine v{analysis.engine_version} · Ruleset v{analysis.ruleset_version}</p>
           </div>
         </div>
-        <Badge className={`border ${SEVERITY_COLOR[analysis.severity]} capitalize`}>{analysis.severity}</Badge>
+        <div className="flex items-center gap-2">
+          <Badge className={`border ${SEVERITY_COLOR[analysis.severity]} capitalize`}>{analysis.severity}</Badge>
+          <Button asChild variant="outline" size="sm">
+            <Link to={`/app/knowledge?category=${analysis.primary_category}`}><BookOpen className="h-4 w-4 mr-1" /> KB</Link>
+          </Button>
+          <Button onClick={handleExportPdf} size="sm"><FileDown className="h-4 w-4 mr-1" /> Exportar PDF</Button>
+        </div>
       </div>
 
       {/* Top: confidence + tier + chances */}
@@ -198,6 +264,31 @@ export default function AnalysisView() {
           ))}
         </ol>
       </Card>
+
+      {/* Casos similares */}
+      {similar.length > 0 && (
+        <Card className="panel p-5">
+          <h3 className="font-semibold flex items-center gap-2 mb-4"><GitCompare className="h-4 w-4 text-primary" /> Casos similares na sua bancada</h3>
+          <div className="grid md:grid-cols-2 gap-3">
+            {similar.map(s => (
+              <Link key={s.analysisId} to={`/app/analysis/${s.analysisId}`} className="border border-border rounded-lg p-3 hover:bg-muted/30 transition-colors">
+                <div className="flex justify-between items-start gap-2">
+                  <div className="font-medium text-sm leading-tight">{s.caseTitle}</div>
+                  <Badge className="text-[10px] bg-primary/15 text-primary border border-primary/30">{s.score}% match</Badge>
+                </div>
+                <div className="flex flex-wrap gap-1 mt-2">
+                  <Badge variant="outline" className="text-[10px] capitalize">{s.primaryCategory.replace(/_/g, ' ')}</Badge>
+                  <Badge variant="outline" className={`text-[10px] capitalize ${SEVERITY_COLOR[s.severity]}`}>{s.severity}</Badge>
+                  {s.outcome && <Badge variant="outline" className="text-[10px]">resolvido: {s.outcome}</Badge>}
+                </div>
+                {s.overlapComponents.length > 0 && (
+                  <div className="text-[11px] text-muted-foreground mt-2">Componentes em comum: {s.overlapComponents.join(', ')}</div>
+                )}
+              </Link>
+            ))}
+          </div>
+        </Card>
+      )}
 
       {/* Bench notes + metadata */}
       <div className="grid lg:grid-cols-2 gap-4">
