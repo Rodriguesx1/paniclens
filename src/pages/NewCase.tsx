@@ -1,7 +1,8 @@
 import { useState, useCallback } from 'react';
 import { useDropzone } from 'react-dropzone';
-import { useNavigate } from 'react-router-dom';
+import { Link, useNavigate } from 'react-router-dom';
 import { useAuth } from '@/hooks/useAuth';
+import { useLicense } from '@/hooks/useLicense';
 import { supabase } from '@/integrations/supabase/client';
 import { Button } from '@/components/ui/button';
 import { Card } from '@/components/ui/card';
@@ -10,7 +11,7 @@ import { Label } from '@/components/ui/label';
 import { Textarea } from '@/components/ui/textarea';
 import { Tabs, TabsList, TabsTrigger, TabsContent } from '@/components/ui/tabs';
 import { toast } from 'sonner';
-import { UploadCloud, FileText, Wand2 } from 'lucide-react';
+import { UploadCloud, FileText, Wand2, Lock, Crown } from 'lucide-react';
 import { parsePanicLog, PARSER_VERSION } from '@/lib/parser/panicParser';
 import { diagnose } from '@/lib/engine/diagnose';
 import { z } from 'zod';
@@ -27,6 +28,7 @@ const caseSchema = z.object({
 
 export default function NewCase() {
   const { user, currentOrgId } = useAuth();
+  const { license, used, remaining, canAnalyze, refresh: refreshLicense } = useLicense();
   const nav = useNavigate();
   const [loading, setLoading] = useState(false);
   const [filename, setFilename] = useState<string | null>(null);
@@ -52,6 +54,7 @@ export default function NewCase() {
 
   async function analyze() {
     if (!user || !currentOrgId) { toast.error('Sessão inválida'); return; }
+    if (!canAnalyze) { toast.error('Limite de licença atingido', { description: 'Atualize seu plano em /app/billing.' }); return; }
     const parsedForm = caseSchema.safeParse(form);
     if (!parsedForm.success) { toast.error(parsedForm.error.issues[0].message); return; }
     const { title, reportedDefect, customerName, commercialModel, serial, imei, raw } = parsedForm.data;
