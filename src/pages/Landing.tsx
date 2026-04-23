@@ -116,6 +116,10 @@ export default function Landing() {
       <main className="relative z-10 mx-auto max-w-7xl px-6">
         <section className="grid gap-14 py-16 lg:grid-cols-[1.12fr_0.88fr] lg:items-center lg:py-24">
           <div className="max-w-3xl">
+            <div className="mb-5 inline-flex items-center gap-2 rounded-full border border-success/25 bg-success/10 px-4 py-2 text-[11px] uppercase tracking-[0.26em] text-success">
+              <CheckCircle2 className="h-3 w-3" />
+              Publicação visível no main
+            </div>
             <div className="inline-flex items-center gap-2 rounded-full border border-primary/30 bg-primary/10 px-4 py-2 text-[11px] uppercase tracking-[0.26em] text-primary">
               <Sparkles className="h-3 w-3" />
               Inteligência diagnóstica para assistências Apple
