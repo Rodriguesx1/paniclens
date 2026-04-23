@@ -453,6 +453,70 @@ export type Database = {
           },
         ]
       }
+      knowledge_articles: {
+        Row: {
+          affected_models: Json
+          author: string | null
+          category: Database["public"]["Enums"]["diagnostic_category"]
+          content_md: string
+          created_at: string
+          id: string
+          key_symptoms: Json
+          keywords: Json
+          recommended_tests: Json
+          related_components: Json
+          slug: string
+          status: string
+          summary: string
+          title: string
+          typical_severity: Database["public"]["Enums"]["severity_level"] | null
+          updated_at: string
+          version: number
+        }
+        Insert: {
+          affected_models?: Json
+          author?: string | null
+          category: Database["public"]["Enums"]["diagnostic_category"]
+          content_md: string
+          created_at?: string
+          id?: string
+          key_symptoms?: Json
+          keywords?: Json
+          recommended_tests?: Json
+          related_components?: Json
+          slug: string
+          status?: string
+          summary: string
+          title: string
+          typical_severity?:
+            | Database["public"]["Enums"]["severity_level"]
+            | null
+          updated_at?: string
+          version?: number
+        }
+        Update: {
+          affected_models?: Json
+          author?: string | null
+          category?: Database["public"]["Enums"]["diagnostic_category"]
+          content_md?: string
+          created_at?: string
+          id?: string
+          key_symptoms?: Json
+          keywords?: Json
+          recommended_tests?: Json
+          related_components?: Json
+          slug?: string
+          status?: string
+          summary?: string
+          title?: string
+          typical_severity?:
+            | Database["public"]["Enums"]["severity_level"]
+            | null
+          updated_at?: string
+          version?: number
+        }
+        Relationships: []
+      }
       memberships: {
         Row: {
           created_at: string
