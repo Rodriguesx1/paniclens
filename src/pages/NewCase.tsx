@@ -14,6 +14,7 @@ import { toast } from 'sonner';
 import { UploadCloud, FileText, Wand2, Lock, Crown } from 'lucide-react';
 import { parsePanicLog, PARSER_VERSION } from '@/lib/parser/panicParser';
 import { diagnose } from '@/lib/engine/diagnose';
+import type { Json, Database } from '@/integrations/supabase/types';
 import { z } from 'zod';
 
 const caseSchema = z.object({
@@ -35,6 +36,7 @@ export default function NewCase() {
   const [form, setForm] = useState({
     title: '', reportedDefect: '', customerName: '', commercialModel: '', serial: '', imei: '', raw: '',
   });
+  type DiagnosticCategory = Database['public']['Enums']['diagnostic_category'];
 
   const onDrop = useCallback(async (files: File[]) => {
     const f = files[0];
@@ -45,6 +47,14 @@ export default function NewCase() {
     setFilename(f.name);
     toast.success(`${f.name} carregado (${(f.size/1024).toFixed(1)} KB)`);
   }, []);
+
+  async function rollbackCreatedEntities(ids: { caseId?: string; deviceId?: string; customerId?: string }) {
+    const deletions = [];
+    if (ids.caseId) deletions.push(supabase.from('cases').delete().eq('id', ids.caseId));
+    if (ids.deviceId) deletions.push(supabase.from('devices').delete().eq('id', ids.deviceId));
+    if (ids.customerId) deletions.push(supabase.from('customers').delete().eq('id', ids.customerId));
+    await Promise.allSettled(deletions);
+  }
 
   const { getRootProps, getInputProps, isDragActive } = useDropzone({
     onDrop,
@@ -60,42 +70,47 @@ export default function NewCase() {
     const { title, reportedDefect, customerName, commercialModel, serial, imei, raw } = parsedForm.data;
 
     setLoading(true);
+    let createdCaseId: string | null = null;
+    let createdDeviceId: string | null = null;
+    let createdCustomerId: string | null = null;
     try {
       // Parse + diagnose locally (deterministic)
       const parsed = parsePanicLog(raw);
       const result = diagnose(parsed);
 
       // Optional customer
-      let customer_id: string | null = null;
       if (customerName) {
         const { data: c, error: cerr } = await supabase.from('customers')
           .insert({ org_id: currentOrgId, name: customerName }).select('id').single();
-        if (cerr) throw cerr; customer_id = c.id;
+        if (cerr) throw cerr;
+        createdCustomerId = c.id;
       }
       // Optional device
-      let device_id: string | null = null;
       if (commercialModel || serial || imei || parsed.metadata.hardwareModel) {
         const { data: d, error: derr } = await supabase.from('devices').insert({
-          org_id: currentOrgId, customer_id,
+          org_id: currentOrgId, customer_id: createdCustomerId,
           commercial_model: commercialModel || parsed.metadata.deviceModel || null,
           technical_identifier: parsed.metadata.hardwareModel || null,
           serial: serial || parsed.metadata.serial || null,
           imei: imei || null,
           ios_version: parsed.metadata.iosVersion || null,
         }).select('id').single();
-        if (derr) throw derr; device_id = d.id;
+        if (derr) throw derr;
+        createdDeviceId = d.id;
       }
 
       // Case
       const { data: caseRow, error: caseErr } = await supabase.from('cases').insert({
-        org_id: currentOrgId, technician_id: user.id, customer_id, device_id,
+        org_id: currentOrgId, technician_id: user.id, customer_id: createdCustomerId, device_id: createdDeviceId,
         title, reported_defect: reportedDefect ?? null, status: 'analyzed',
       }).select('id').single();
       if (caseErr) throw caseErr;
+      const caseId = caseRow.id;
+      createdCaseId = caseId;
 
       // Panic log
       const { data: logRow, error: logErr } = await supabase.from('panic_logs').insert({
-        org_id: currentOrgId, case_id: caseRow.id, uploaded_by: user.id,
+        org_id: currentOrgId, case_id: caseId, uploaded_by: user.id,
         source: filename ? 'upload' : 'paste', filename, byte_size: new Blob([raw]).size,
         raw_content: raw,
       }).select('id').single();
@@ -104,18 +119,18 @@ export default function NewCase() {
       // Parsed log
       const { data: parsedRow, error: pErr } = await supabase.from('parsed_logs').insert({
         org_id: currentOrgId, panic_log_id: logRow.id, parser_version: PARSER_VERSION,
-        metadata: parsed.metadata as any,
-        raw_evidences: parsed.rawEvidences as any,
-        detected_categories: parsed.detectedCategories as any,
+        metadata: parsed.metadata as Json,
+        raw_evidences: parsed.rawEvidences as Json,
+        detected_categories: parsed.detectedCategories as Json,
       }).select('id').single();
       if (pErr) throw pErr;
 
       // Analysis
       const { data: analysisRow, error: aErr } = await supabase.from('analysis_results').insert({
-        org_id: currentOrgId, case_id: caseRow.id, panic_log_id: logRow.id, parsed_log_id: parsedRow.id,
+        org_id: currentOrgId, case_id: caseId, panic_log_id: logRow.id, parsed_log_id: parsedRow.id,
         engine_version: result.engineVersion, ruleset_version: result.rulesetVersion,
         executive_summary: result.executiveSummary,
-        primary_category: result.primaryCategory as any,
+        primary_category: result.primaryCategory as DiagnosticCategory,
         severity: result.severity,
         confidence_score: result.confidenceScore,
         confidence_label: result.confidenceLabel,
@@ -123,12 +138,12 @@ export default function NewCase() {
         likely_repair_tier: result.likelyRepairTier,
         likely_simple_swap_chance: result.likelySimpleSwapChance,
         likely_board_repair_chance: result.likelyBoardRepairChance,
-        suspected_components: result.suspectedComponents as any,
+        suspected_components: result.suspectedComponents as Json,
         probable_subsystem: result.probableSubsystem,
-        recommended_test_sequence: result.recommendedTestSequence as any,
-        technical_alerts: result.technicalAlerts as any,
+        recommended_test_sequence: result.recommendedTestSequence as Json,
+        technical_alerts: result.technicalAlerts as Json,
         bench_notes: result.benchNotes,
-        full_payload: result as any,
+        full_payload: result as unknown as Json,
       }).select('id').single();
       if (aErr) throw aErr;
 
@@ -136,9 +151,9 @@ export default function NewCase() {
       if (result.hypotheses.length) {
         const { error: hErr } = await supabase.from('diagnostic_hypotheses').insert(result.hypotheses.map(h => ({
           analysis_id: analysisRow.id, org_id: currentOrgId,
-          rule_id: h.ruleId, rule_version: h.ruleVersion, category: h.category as any,
+          rule_id: h.ruleId, rule_version: h.ruleVersion, category: h.category as DiagnosticCategory,
           is_primary: h.isPrimary, title: h.title, explanation: h.explanation,
-          confidence_score: h.confidenceScore, suspected_components: h.suspectedComponents as any, rank: h.rank,
+          confidence_score: h.confidenceScore, suspected_components: h.suspectedComponents as Json, rank: h.rank,
         })));
         if (hErr) throw hErr;
       }
@@ -146,7 +161,7 @@ export default function NewCase() {
       if (result.evidences.length) {
         const { error: eErr } = await supabase.from('diagnostic_evidences').insert(result.evidences.map(e => ({
           analysis_id: analysisRow.id, org_id: currentOrgId,
-          category: e.category as any, evidence_key: e.evidenceKey, matched_text: e.matchedText,
+          category: e.category as DiagnosticCategory, evidence_key: e.evidenceKey, matched_text: e.matchedText,
           weight: e.weight, is_conflicting: e.isConflicting, context: e.context,
         })));
         if (eErr) throw eErr;
@@ -171,9 +186,14 @@ export default function NewCase() {
 
       toast.success('Análise concluída.');
       nav(`/app/analysis/${analysisRow.id}`);
-    } catch (e: any) {
+    } catch (e: unknown) {
       console.error(e);
-      toast.error(e.message ?? 'Falha ao processar análise');
+      await rollbackCreatedEntities({
+        caseId: createdCaseId ?? undefined,
+        deviceId: createdDeviceId ?? undefined,
+        customerId: createdCustomerId ?? undefined,
+      });
+      toast.error(e instanceof Error ? e.message : 'Falha ao processar análise');
     } finally {
       setLoading(false);
     }

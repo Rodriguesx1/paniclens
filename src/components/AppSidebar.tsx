@@ -4,6 +4,7 @@ import {
   Sidebar, SidebarContent, SidebarGroup, SidebarGroupContent, SidebarGroupLabel,
   SidebarMenu, SidebarMenuButton, SidebarMenuItem, useSidebar, SidebarHeader, SidebarFooter,
 } from '@/components/ui/sidebar';
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { useAuth } from '@/hooks/useAuth';
 import { Button } from '@/components/ui/button';
 import { ENGINE_VERSION } from '@/lib/engine/diagnose';
@@ -20,9 +21,10 @@ const items = [
 export function AppSidebar() {
   const { state } = useSidebar();
   const collapsed = state === 'collapsed';
-  const { signOut, user, memberships } = useAuth();
+  const { signOut, user, memberships, organizations, currentOrgId, setCurrentOrgId } = useAuth();
   const isSuper = memberships.some(m => m.role === 'super_admin');
   const location = useLocation();
+  const currentOrg = organizations.find(org => org.id === currentOrgId);
 
   return (
     <Sidebar collapsible="icon" className="border-r border-sidebar-border">
@@ -38,6 +40,26 @@ export function AppSidebar() {
             </div>
           )}
         </div>
+        {!collapsed && organizations.length > 0 && (
+          <div className="mt-4">
+            <div className="mb-1 text-[10px] uppercase tracking-[0.18em] text-muted-foreground">Organização ativa</div>
+            <Select value={currentOrgId ?? ''} onValueChange={value => setCurrentOrgId(value || null)}>
+              <SelectTrigger className="h-9">
+                <SelectValue placeholder="Selecionar organização" />
+              </SelectTrigger>
+              <SelectContent>
+                {organizations.map(org => (
+                  <SelectItem key={org.id} value={org.id}>
+                    {org.name}
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+            {currentOrg && (
+              <div className="mt-1 text-[11px] text-muted-foreground truncate">{currentOrg.slug}</div>
+            )}
+          </div>
+        )}
       </SidebarHeader>
 
       <SidebarContent>

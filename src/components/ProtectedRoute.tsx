@@ -16,7 +16,9 @@ export function ProtectedRoute({
   }
   if (!user) return <Navigate to="/auth" state={{ from: location }} replace />;
   if (requiredRole) {
-    const hasRole = memberships.some(m => m.role === requiredRole && (!currentOrgId || m.org_id === currentOrgId));
+    const hasRole = requiredRole === 'super_admin'
+      ? memberships.some(m => m.role === requiredRole)
+      : memberships.some(m => m.role === requiredRole && (!currentOrgId || m.org_id === currentOrgId));
     if (!hasRole) return <Navigate to="/app" replace />;
   }
   return <>{children}</>;

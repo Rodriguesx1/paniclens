@@ -3,6 +3,7 @@ import { supabase } from '@/integrations/supabase/client';
 import type { Session, User } from '@supabase/supabase-js';
 
 type OrgMembership = { org_id: string; role: string };
+type Organization = { id: string; name: string; slug: string };
 
 type AuthCtx = {
   user: User | null;
@@ -10,12 +11,20 @@ type AuthCtx = {
   loading: boolean;
   currentOrgId: string | null;
   memberships: OrgMembership[];
+  organizations: Organization[];
   setCurrentOrgId: (orgId: string | null) => void;
   signOut: () => Promise<void>;
 };
 
 const AuthContext = createContext<AuthCtx>({
-  user: null, session: null, loading: true, currentOrgId: null, memberships: [], setCurrentOrgId: () => {}, signOut: async () => {},
+  user: null,
+  session: null,
+  loading: true,
+  currentOrgId: null,
+  memberships: [],
+  organizations: [],
+  setCurrentOrgId: () => {},
+  signOut: async () => {},
 });
 
 export function AuthProvider({ children }: { children: ReactNode }) {
@@ -23,6 +32,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const [session, setSession] = useState<Session | null>(null);
   const [loading, setLoading] = useState(true);
   const [memberships, setMemberships] = useState<OrgMembership[]>([]);
+  const [organizations, setOrganizations] = useState<Organization[]>([]);
   const [currentOrgId, setCurrentOrgId] = useState<string | null>(null);
 
   useEffect(() => {
@@ -47,19 +57,41 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   }, []);
 
   async function loadMemberships(uid: string) {
-    const { data } = await supabase.from('memberships').select('org_id, role').eq('user_id', uid);
-    if (data && data.length > 0) {
-      setMemberships(data);
-      const stored = localStorage.getItem('paniclens.org');
-      const orgIds = [...new Set(data.map(m => m.org_id))];
-      const selected = stored && orgIds.includes(stored) ? stored : orgIds[0];
-      setCurrentOrgId(selected);
-      localStorage.setItem('paniclens.org', selected);
-    } else {
+    try {
+      const { data, error } = await supabase.from('memberships').select('org_id, role').eq('user_id', uid);
+      if (error) throw error;
+      if (data && data.length > 0) {
+        setMemberships(data);
+        const orgIds = [...new Set(data.map(m => m.org_id))];
+        const { data: orgRows, error: orgError } = await supabase
+          .from('organizations')
+          .select('id, name, slug')
+          .in('id', orgIds);
+        if (orgError) throw orgError;
+        const orderedOrgs = orgIds
+          .map(id => orgRows?.find(org => org.id === id))
+          .filter((org): org is Organization => Boolean(org));
+        setOrganizations(orderedOrgs);
+        const stored = localStorage.getItem('paniclens.org');
+        const selected = stored && orgIds.includes(stored) ? stored : orderedOrgs[0]?.id ?? null;
+        setCurrentOrgId(selected);
+        if (selected) localStorage.setItem('paniclens.org', selected);
+        else localStorage.removeItem('paniclens.org');
+      } else {
+        setMemberships([]);
+        setOrganizations([]);
+        setCurrentOrgId(null);
+        localStorage.removeItem('paniclens.org');
+      }
+    } catch (error) {
+      console.error('Falha ao carregar organizações do usuário', error);
       setMemberships([]);
+      setOrganizations([]);
       setCurrentOrgId(null);
+      localStorage.removeItem('paniclens.org');
+    } finally {
+      setLoading(false);
     }
-    setLoading(false);
   }
 
   async function signOut() {
@@ -74,6 +106,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       loading,
       currentOrgId,
       memberships,
+      organizations,
       setCurrentOrgId: (orgId) => {
         setCurrentOrgId(orgId);
         if (orgId) localStorage.setItem('paniclens.org', orgId);
