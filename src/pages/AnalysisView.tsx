@@ -265,6 +265,31 @@ export default function AnalysisView() {
         </ol>
       </Card>
 
+      {/* Casos similares */}
+      {similar.length > 0 && (
+        <Card className="panel p-5">
+          <h3 className="font-semibold flex items-center gap-2 mb-4"><GitCompare className="h-4 w-4 text-primary" /> Casos similares na sua bancada</h3>
+          <div className="grid md:grid-cols-2 gap-3">
+            {similar.map(s => (
+              <Link key={s.analysisId} to={`/app/analysis/${s.analysisId}`} className="border border-border rounded-lg p-3 hover:bg-muted/30 transition-colors">
+                <div className="flex justify-between items-start gap-2">
+                  <div className="font-medium text-sm leading-tight">{s.caseTitle}</div>
+                  <Badge className="text-[10px] bg-primary/15 text-primary border border-primary/30">{s.score}% match</Badge>
+                </div>
+                <div className="flex flex-wrap gap-1 mt-2">
+                  <Badge variant="outline" className="text-[10px] capitalize">{s.primaryCategory.replace(/_/g, ' ')}</Badge>
+                  <Badge variant="outline" className={`text-[10px] capitalize ${SEVERITY_COLOR[s.severity]}`}>{s.severity}</Badge>
+                  {s.outcome && <Badge variant="outline" className="text-[10px]">resolvido: {s.outcome}</Badge>}
+                </div>
+                {s.overlapComponents.length > 0 && (
+                  <div className="text-[11px] text-muted-foreground mt-2">Componentes em comum: {s.overlapComponents.join(', ')}</div>
+                )}
+              </Link>
+            ))}
+          </div>
+        </Card>
+      )}
+
       {/* Bench notes + metadata */}
       <div className="grid lg:grid-cols-2 gap-4">
         <Card className="panel p-5">
