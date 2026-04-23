@@ -142,7 +142,13 @@ export default function AnalysisView() {
             <p className="text-xs text-muted-foreground">Engine v{analysis.engine_version} · Ruleset v{analysis.ruleset_version}</p>
           </div>
         </div>
-        <Badge className={`border ${SEVERITY_COLOR[analysis.severity]} capitalize`}>{analysis.severity}</Badge>
+        <div className="flex items-center gap-2">
+          <Badge className={`border ${SEVERITY_COLOR[analysis.severity]} capitalize`}>{analysis.severity}</Badge>
+          <Button asChild variant="outline" size="sm">
+            <Link to={`/app/knowledge?category=${analysis.primary_category}`}><BookOpen className="h-4 w-4 mr-1" /> KB</Link>
+          </Button>
+          <Button onClick={handleExportPdf} size="sm"><FileDown className="h-4 w-4 mr-1" /> Exportar PDF</Button>
+        </div>
       </div>
 
       {/* Top: confidence + tier + chances */}
