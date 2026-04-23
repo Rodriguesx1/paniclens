@@ -1,5 +1,5 @@
 import { NavLink, useLocation } from 'react-router-dom';
-import { LayoutDashboard, FilePlus2, FolderOpen, Users, Cpu, LogOut, Sparkles, BookOpen } from 'lucide-react';
+import { LayoutDashboard, FilePlus2, FolderOpen, Users, Cpu, LogOut, Sparkles, BookOpen, Crown, ShieldCheck } from 'lucide-react';
 import {
   Sidebar, SidebarContent, SidebarGroup, SidebarGroupContent, SidebarGroupLabel,
   SidebarMenu, SidebarMenuButton, SidebarMenuItem, useSidebar, SidebarHeader, SidebarFooter,
@@ -13,12 +13,14 @@ const items = [
   { title: 'Casos', url: '/app/cases', icon: FolderOpen },
   { title: 'Clientes', url: '/app/customers', icon: Users },
   { title: 'Base de conhecimento', url: '/app/knowledge', icon: BookOpen },
+  { title: 'Licença & uso', url: '/app/billing', icon: Crown },
 ];
 
 export function AppSidebar() {
   const { state } = useSidebar();
   const collapsed = state === 'collapsed';
-  const { signOut, user } = useAuth();
+  const { signOut, user, memberships } = useAuth();
+  const isSuper = memberships.some(m => m.role === 'super_admin');
   const location = useLocation();
 
   return (
@@ -55,6 +57,24 @@ export function AppSidebar() {
             </SidebarMenu>
           </SidebarGroupContent>
         </SidebarGroup>
+
+        {isSuper && (
+          <SidebarGroup>
+            <SidebarGroupLabel>Plataforma</SidebarGroupLabel>
+            <SidebarGroupContent>
+              <SidebarMenu>
+                <SidebarMenuItem>
+                  <SidebarMenuButton asChild isActive={location.pathname.startsWith('/app/admin')}>
+                    <NavLink to="/app/admin">
+                      <ShieldCheck className="h-4 w-4" />
+                      {!collapsed && <span>Super Admin</span>}
+                    </NavLink>
+                  </SidebarMenuButton>
+                </SidebarMenuItem>
+              </SidebarMenu>
+            </SidebarGroupContent>
+          </SidebarGroup>
+        )}
       </SidebarContent>
 
       <SidebarFooter className="border-t border-sidebar-border p-3">
