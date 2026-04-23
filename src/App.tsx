@@ -15,6 +15,8 @@ import CaseDetail from "./pages/CaseDetail";
 import AnalysisView from "./pages/AnalysisView";
 import Customers from "./pages/Customers";
 import Knowledge from "./pages/Knowledge";
+import Billing from "./pages/Billing";
+import Admin from "./pages/Admin";
 import NotFound from "./pages/NotFound";
 
 const queryClient = new QueryClient();
@@ -37,6 +39,8 @@ const App = () => (
               <Route path="analysis/:id" element={<AnalysisView />} />
               <Route path="customers" element={<Customers />} />
               <Route path="knowledge" element={<Knowledge />} />
+              <Route path="billing" element={<Billing />} />
+              <Route path="admin" element={<Admin />} />
             </Route>
             <Route path="*" element={<NotFound />} />
           </Routes>

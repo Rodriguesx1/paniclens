@@ -257,7 +257,7 @@ export default function NewCase() {
 
         <div className="flex items-center justify-end gap-3 pt-2">
           <Button variant="ghost" onClick={() => nav(-1)}>Cancelar</Button>
-          <Button onClick={analyze} disabled={loading}>
+          <Button onClick={analyze} disabled={loading || !canAnalyze}>
             <Wand2 className="h-4 w-4 mr-2" />
             {loading ? 'Analisando…' : 'Analisar agora'}
           </Button>
