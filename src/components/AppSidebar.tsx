@@ -1,5 +1,5 @@
 import { NavLink, useLocation } from 'react-router-dom';
-import { LayoutDashboard, FilePlus2, FolderOpen, Users, Cpu, LogOut, Sparkles } from 'lucide-react';
+import { LayoutDashboard, FilePlus2, FolderOpen, Users, Cpu, LogOut, Sparkles, BookOpen } from 'lucide-react';
 import {
   Sidebar, SidebarContent, SidebarGroup, SidebarGroupContent, SidebarGroupLabel,
   SidebarMenu, SidebarMenuButton, SidebarMenuItem, useSidebar, SidebarHeader, SidebarFooter,
@@ -12,6 +12,7 @@ const items = [
   { title: 'Nova análise', url: '/app/new', icon: FilePlus2 },
   { title: 'Casos', url: '/app/cases', icon: FolderOpen },
   { title: 'Clientes', url: '/app/customers', icon: Users },
+  { title: 'Base de conhecimento', url: '/app/knowledge', icon: BookOpen },
 ];
 
 export function AppSidebar() {
