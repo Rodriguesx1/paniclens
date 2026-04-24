@@ -8,6 +8,7 @@ import { Button } from '@/components/ui/button';
 import { ArrowLeft, AlertTriangle, ShieldCheck, Wrench, FlaskConical, ChevronRight, Cpu, Microscope, Activity, FileDown, BookOpen, GitCompare } from 'lucide-react';
 import { generateAnalysisPdf } from '@/lib/report/generatePdf';
 import { findSimilarCases, type SimilarCase } from '@/lib/similarity/findSimilarCases';
+import { getAvailableCaseTransitions, getCaseStatusBadgeClass, getCaseStatusMeta, type CaseStatus } from '@/lib/domain/caseWorkflow';
 import { toast } from 'sonner';
 
 type AnalysisFull = {
@@ -18,13 +19,22 @@ type AnalysisFull = {
   suspected_components: string[]; probable_subsystem: string;
   recommended_test_sequence: string[]; technical_alerts: string[]; bench_notes: string;
   engine_version: string; ruleset_version: string; created_at: string;
-  full_payload: any;
+  full_payload: Record<string, unknown>;
 };
 type Hyp = { id: string; rule_id: string; category: string; is_primary: boolean; title: string; explanation: string; confidence_score: number; suspected_components: string[]; rank: number };
 type Ev = { id: string; category: string; evidence_key: string; matched_text: string; weight: number; is_conflicting: boolean; context: string };
 type Sug = { id: string; action_title: string; action_type: string; priority: number; difficulty: string; estimated_cost: string; estimated_time: string; technical_risk: string; expected_resolution_chance: number; why_this_action: string; when_to_escalate: string };
 type CaseInfo = { title: string; reported_defect: string; status: string };
 type LogInfo = { raw_content: string; filename: string };
+type ParsedMeta = {
+  customerName?: string;
+  product?: string;
+  deviceModel?: string;
+  serial?: string;
+  osVersion?: string;
+  iosVersion?: string;
+  [key: string]: unknown;
+} | null;
 
 const SEVERITY_COLOR: Record<string, string> = {
   low: 'bg-success/15 text-success border-success/30',
@@ -42,17 +52,20 @@ const TIER_LABEL: Record<string, string> = {
 
 export default function AnalysisView() {
   const { id } = useParams<{ id: string }>();
-  const { currentOrgId } = useAuth();
+  const { currentOrgId, user } = useAuth();
   const [analysis, setAnalysis] = useState<AnalysisFull | null>(null);
   const [hypotheses, setHypotheses] = useState<Hyp[]>([]);
   const [evidences, setEvidences] = useState<Ev[]>([]);
   const [suggestions, setSuggestions] = useState<Sug[]>([]);
   const [caseInfo, setCaseInfo] = useState<CaseInfo | null>(null);
   const [logInfo, setLogInfo] = useState<LogInfo | null>(null);
-  const [parsedMeta, setParsedMeta] = useState<any>(null);
+  const [parsedMeta, setParsedMeta] = useState<ParsedMeta>(null);
   const [similar, setSimilar] = useState<SimilarCase[]>([]);
   const [orgName, setOrgName] = useState<string>('');
-  const modelCalibrationVersion = analysis?.full_payload?.modelCalibrationVersion as string | undefined;
+  const [savingStatus, setSavingStatus] = useState<CaseStatus | null>(null);
+  const modelCalibrationVersion = typeof analysis?.full_payload?.['modelCalibrationVersion'] === 'string'
+    ? (analysis.full_payload['modelCalibrationVersion'] as string)
+    : undefined;
 
   useEffect(() => {
     if (!id || !currentOrgId) return;
@@ -67,7 +80,7 @@ export default function AnalysisView() {
         toast.error('Falha ao carregar análise', { description: aErr?.message ?? 'análise não encontrada' });
         return;
       }
-      setAnalysis(a as any);
+      setAnalysis(a as AnalysisFull);
       const [{ data: h }, { data: e }, { data: s }, { data: c }, { data: log }, { data: parsed }] = await Promise.all([
         supabase.from('diagnostic_hypotheses').select('*').eq('analysis_id', id).eq('org_id', currentOrgId).order('rank'),
         supabase.from('diagnostic_evidences').select('*').eq('analysis_id', id).eq('org_id', currentOrgId),
@@ -76,7 +89,9 @@ export default function AnalysisView() {
         supabase.from('panic_logs').select('raw_content, filename').eq('id', a.panic_log_id).eq('org_id', currentOrgId).single(),
         supabase.from('parsed_logs').select('metadata').eq('panic_log_id', a.panic_log_id).eq('org_id', currentOrgId).single(),
       ]);
-      setHypotheses((h ?? []) as any); setEvidences((e ?? []) as any); setSuggestions((s ?? []) as any);
+      setHypotheses((h ?? []) as Hyp[]);
+      setEvidences((e ?? []) as Ev[]);
+      setSuggestions((s ?? []) as Sug[]);
       setCaseInfo(c ?? null); setLogInfo(log ?? null); setParsedMeta(parsed?.metadata ?? null);
 
       // Similares + nome da org (em paralelo, não-bloqueantes)
@@ -107,7 +122,7 @@ export default function AnalysisView() {
         createdAt: analysis.created_at,
         engineVersion: analysis.engine_version,
         rulesetVersion: analysis.ruleset_version,
-        modelCalibrationVersion: analysis.full_payload?.modelCalibrationVersion ?? null,
+        modelCalibrationVersion: typeof analysis.full_payload?.['modelCalibrationVersion'] === 'string' ? analysis.full_payload['modelCalibrationVersion'] as string : null,
         executiveSummary: analysis.executive_summary,
         primaryCategory: analysis.primary_category,
         severity: analysis.severity,
@@ -132,8 +147,37 @@ export default function AnalysisView() {
       const safeName = (caseInfo?.title ?? 'analise').replace(/[^a-z0-9-_]+/gi, '_').slice(0, 40);
       doc.save(`paniclens_${safeName}_${analysis.id.slice(0, 6)}.pdf`);
       toast.success('PDF gerado');
-    } catch (err: any) {
-      toast.error('Falha ao gerar PDF', { description: err?.message ?? 'erro desconhecido' });
+    } catch (err: unknown) {
+      toast.error('Falha ao gerar PDF', { description: err instanceof Error ? err.message : 'erro desconhecido' });
+    }
+  }
+
+  async function updateCaseStatus(nextStatus: CaseStatus) {
+    if (!analysis || !currentOrgId) return;
+    setSavingStatus(nextStatus);
+    try {
+      const { error } = await supabase.from('cases').update({
+        status: nextStatus,
+        resolved_at: nextStatus === 'resolved' || nextStatus === 'closed' ? new Date().toISOString() : null,
+        updated_at: new Date().toISOString(),
+      }).eq('id', analysis.case_id).eq('org_id', currentOrgId);
+      if (error) throw error;
+
+      await supabase.from('audit_log').insert({
+        org_id: currentOrgId,
+        user_id: user?.id ?? null,
+        action: 'case_status_changed_from_analysis',
+        entity: 'case',
+        entity_id: analysis.case_id,
+        payload: { analysis_id: analysis.id, to: nextStatus },
+      });
+
+      setCaseInfo(prev => prev ? { ...prev, status: nextStatus } : prev);
+      toast.success(`Caso movido para ${getCaseStatusMeta(nextStatus).label.toLowerCase()}.`);
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : 'Falha ao atualizar status');
+    } finally {
+      setSavingStatus(null);
     }
   }
 
@@ -184,6 +228,36 @@ export default function AnalysisView() {
           </div>
         </Card>
       </div>
+
+      <Card className="panel p-5">
+        <div className="flex items-center justify-between gap-3 flex-wrap">
+          <div>
+            <div className="text-xs uppercase tracking-wider text-muted-foreground">Workflow do caso</div>
+            <div className="mt-1 flex items-center gap-2 flex-wrap">
+              <Badge className={`border ${getCaseStatusBadgeClass(caseInfo?.status ?? 'open')} capitalize`}>
+                {getCaseStatusMeta(caseInfo?.status ?? 'open').label}
+              </Badge>
+              <span className="text-sm text-muted-foreground">{getCaseStatusMeta(caseInfo?.status ?? 'open').description}</span>
+            </div>
+          </div>
+          <Button asChild variant="outline" size="sm">
+            <Link to={`/app/cases/${analysis.case_id}`}>Abrir caso</Link>
+          </Button>
+        </div>
+        <div className="mt-4 flex flex-wrap gap-2">
+          {getAvailableCaseTransitions(caseInfo?.status ?? 'open').map(next => (
+            <Button
+              key={next}
+              variant="outline"
+              size="sm"
+              disabled={savingStatus === next}
+              onClick={() => updateCaseStatus(next)}
+            >
+              {savingStatus === next ? 'Salvando…' : `Mover para ${getCaseStatusMeta(next).label}`}
+            </Button>
+          ))}
+        </div>
+      </Card>
 
       {/* Executive summary + alerts */}
       <Card className="panel p-5">

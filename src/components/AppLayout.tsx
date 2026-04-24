@@ -1,8 +1,6 @@
 import { Outlet } from 'react-router-dom';
-import { ArrowUpRight, Circle } from 'lucide-react';
 import { SidebarProvider, SidebarTrigger } from '@/components/ui/sidebar';
 import { AppSidebar } from '@/components/AppSidebar';
-import { Badge } from '@/components/ui/badge';
 
 export default function AppLayout() {
   return (
@@ -21,15 +19,6 @@ export default function AppLayout() {
                   </div>
                 </div>
               </div>
-
-              <Badge
-                variant="secondary"
-                className="hidden items-center gap-2 border border-primary/20 bg-primary/10 px-3 py-1 text-[11px] font-medium uppercase tracking-[0.18em] text-primary md:inline-flex"
-              >
-                <Circle className="h-2 w-2 fill-current" />
-                Sync check · main
-                <ArrowUpRight className="h-3 w-3" />
-              </Badge>
             </div>
           </header>
 
