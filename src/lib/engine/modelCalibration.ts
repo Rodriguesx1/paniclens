@@ -211,3 +211,56 @@ export function resolveCalibration(major: number, category: string): {
   };
 }
 
+function normalizeHardwareModel(modelCode: string): string {
+  return modelCode.trim().toLowerCase();
+}
+
+function bucketForHardwareModel(modelCode: string): CalibrationBucket | null {
+  const normalized = normalizeHardwareModel(modelCode);
+  if (!normalized) return null;
+
+  if (/^iphone10,(1|2|4|5)$/.test(normalized)) return 'legacy';
+  if (/^iphone10,(3|6)$/.test(normalized)) return 'x_series';
+  if (/^iphone11,/.test(normalized)) return 'iphone_11_family';
+  if (/^iphone12,/.test(normalized)) return 'iphone_12_family';
+  if (/^iphone13,/.test(normalized)) return 'iphone_13_family';
+  if (/^iphone14,/.test(normalized)) return 'iphone_14_family';
+  if (/^iphone15,/.test(normalized)) return 'iphone_15_family';
+  if (/^iphone16,/.test(normalized)) return 'iphone_16_family';
+  if (/^iphone17,/.test(normalized)) return 'future';
+
+  return null;
+}
+
+export function resolveCalibrationForModel(modelCode: string, category: string): {
+  applied: boolean;
+  confidenceDelta: number;
+  boardChanceDelta: number;
+  note?: string;
+} {
+  const bucketKey = bucketForHardwareModel(modelCode);
+  if (bucketKey) {
+    const bucket = MODEL_CALIBRATION_MATRIX.find(entry => entry.bucket === bucketKey);
+    const rule = bucket?.rules.find(r => r.categories.includes(category));
+    if (rule) {
+      return {
+        applied: true,
+        confidenceDelta: rule.confidenceDelta,
+        boardChanceDelta: rule.boardChanceDelta,
+        note: rule.note,
+      };
+    }
+  }
+
+  const major = parseIphoneMajor(modelCode);
+  if (major === null) return { applied: false, confidenceDelta: 0, boardChanceDelta: 0 };
+  return resolveCalibration(major, category);
+}
+
+function parseIphoneMajor(modelCode: string): number | null {
+  const match = modelCode.match(/iphone(\d+),\d+/i);
+  if (!match) return null;
+  const major = Number(match[1]);
+  return Number.isFinite(major) ? major : null;
+}
+

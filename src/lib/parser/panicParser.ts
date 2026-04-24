@@ -5,6 +5,7 @@
  * Handles: IPS (JSON header + payload), legacy panic.txt and full kernel panics.
  * Produces a normalized structure consumed by the Rules Engine.
  */
+import { buildParserSummary, detectSignals } from '@/lib/engine/signalDetector';
 
 export const PARSER_VERSION = '2.0.0';
 
@@ -37,6 +38,8 @@ export type ParsedLog = {
   metadata: ParsedMetadata;
   detectedCategories: string[];
   rawEvidences: RawEvidence[];
+  detectedSignals: import('@/lib/engine/contracts').DetectedSignal[];
+  parserSummary: import('@/lib/engine/contracts').ParserSummary;
   structured: {
     missingSensors: string[];
     watchdogTargets: string[];
@@ -65,7 +68,7 @@ const HW_TO_COMMERCIAL: Record<string, string> = {
   'iPhone17,3': 'iPhone 16', 'iPhone17,4': 'iPhone 16 Plus',
 };
 
-function safeJSON<T = any>(s: string): T | null {
+function safeJSON<T = unknown>(s: string): T | null {
   try { return JSON.parse(s) as T; } catch { return null; }
 }
 
@@ -94,7 +97,7 @@ const PATTERNS: Pattern[] = [
   { key: 'thermal_pressure', category: 'thermal', weight: 15,
     re: /thermal[_ ]pressure|thermal trap|thermal shutdown/i },
   { key: 'missing_sensors', category: 'sensors', weight: 30,
-    re: /missing sensor\(s\)?:?\s*([A-Za-z0-9 _,\-]+)?/i },
+    re: /missing sensor\(s\)?:?\s*([A-Za-z0-9 _,-]+)?/i },
 
   // watchdog
   { key: 'userspace_watchdog_timeout', category: 'watchdog', weight: 30,
@@ -102,11 +105,11 @@ const PATTERNS: Pattern[] = [
   { key: 'kernel_watchdog', category: 'watchdog', weight: 25,
     re: /watchdog (?:timeout|expired|trip)/i },
   { key: 'wdog_no_checkins_generic', category: 'watchdog', weight: 20,
-    re: /no successful checkins from ([\w\.\-]+) in \d+ seconds/i },
+    re: /no successful checkins from ([\w.-]+) in \d+ seconds/i },
 
   // battery / charging
   { key: 'battery_comm_failure', category: 'battery', weight: 30,
-    re: /(battery (?:auth|gas[\- ]?gauge|comm(?:unication)?) (?:failure|error|fault)|gasgauge|smartbattery)/i },
+    re: /(battery (?:auth|gas[- ]?gauge|comm(?:unication)?) (?:failure|error|fault)|gasgauge|smartbattery)/i },
   { key: 'battery_health_anomaly', category: 'battery', weight: 15,
     re: /battery (?:health|state of charge|capacity) (?:anomal|invalid|out of range)/i },
   { key: 'charging_negotiation', category: 'charging', weight: 25,
@@ -160,7 +163,7 @@ const PATTERNS: Pattern[] = [
 
   // generic but valuable signals
   { key: 'panic_string_present', category: 'unknown', weight: 5,
-    re: /panic\(cpu \d+ caller [^\)]+\):/i },
+    re: /panic\(cpu \d+ caller [^)]+\):/i },
 ];
 
 // -------- Main parse --------
@@ -177,39 +180,39 @@ export function parsePanicLog(input: string): ParsedLog {
     if (firstNewline > 0) {
       const headerLine = trimmed.slice(0, firstNewline);
       const rest = trimmed.slice(firstNewline + 1);
-      const header = safeJSON<any>(headerLine);
-      const payload = safeJSON<any>(rest);
+      const header = safeJSON<Record<string, unknown>>(headerLine);
+      const payload = safeJSON<Record<string, unknown>>(rest);
       if (header && payload) {
-        meta.bugType = header.bug_type ?? payload.bug_type;
-        meta.timestamp = header.timestamp ?? payload.timestamp;
-        meta.iosVersion = payload.os_version || payload.build_version;
-        meta.buildVersion = payload.build || payload.build_version;
-        meta.kernelVersion = payload.kernel || payload.kernelVersion;
-        meta.hardwareModel = payload.modelCode || payload.product || payload.hardware_model;
-        meta.productType = payload.product || payload.productType;
-        meta.process = payload.process || payload.procName;
-        meta.responsibleProcess = payload.responsibleProcess;
-        meta.panicString = payload.panicString || payload.panic_string;
-        meta.panicReason = payload.reason;
-        body = (payload.panicString as string) || (payload.callStack as string) || JSON.stringify(payload);
+        meta.bugType = stringValue(header.bug_type) ?? stringValue(payload.bug_type);
+        meta.timestamp = stringValue(header.timestamp) ?? stringValue(payload.timestamp);
+        meta.iosVersion = stringValue(payload.os_version) || stringValue(payload.build_version);
+        meta.buildVersion = stringValue(payload.build) || stringValue(payload.build_version);
+        meta.kernelVersion = stringValue(payload.kernel) || stringValue(payload.kernelVersion);
+        meta.hardwareModel = stringValue(payload.modelCode) || stringValue(payload.product) || stringValue(payload.hardware_model);
+        meta.productType = stringValue(payload.product) || stringValue(payload.productType);
+        meta.process = stringValue(payload.process) || stringValue(payload.procName);
+        meta.responsibleProcess = stringValue(payload.responsibleProcess);
+        meta.panicString = stringValue(payload.panicString) || stringValue(payload.panic_string);
+        meta.panicReason = stringValue(payload.reason);
+        body = stringValue(payload.panicString) || stringValue(payload.callStack) || JSON.stringify(payload);
       } else {
-        const single = safeJSON<any>(trimmed);
+        const single = safeJSON<Record<string, unknown>>(trimmed);
         if (single) {
-          meta.panicString = single.panicString;
-          body = single.panicString || JSON.stringify(single);
+          meta.panicString = stringValue(single.panicString);
+          body = stringValue(single.panicString) || JSON.stringify(single);
         }
       }
     }
   }
 
   // Plain-text fallbacks (work even if IPS JSON also present, complementing meta)
-  meta.panicString ||= firstMatch(body, /panic\([^\)]+\): ?([^\n]+)/i);
+  meta.panicString ||= firstMatch(body, /panic\([^)]+\): ?([^\n]+)/i);
   meta.panicReason ||= firstMatch(body, /Panic Reason:\s*([^\n]+)/i)
                     || firstMatch(body, /reason:\s*"([^"]+)"/i);
   meta.process ||= firstMatch(body, /Process:\s*([^\n]+)/i);
   meta.responsibleProcess ||= firstMatch(body, /Responsible Process:\s*([^\n]+)/i);
-  meta.hardwareModel ||= firstMatch(body, /(?:Hardware Model|hardware_model|modelCode)\s*[:=]\s*([A-Za-z0-9,\-]+)/);
-  meta.productType ||= firstMatch(body, /(?:Product Type|product)\s*[:=]\s*([A-Za-z0-9,\-]+)/);
+  meta.hardwareModel ||= firstMatch(body, /(?:Hardware Model|hardware_model|modelCode)\s*[:=]\s*([A-Za-z0-9,-]+)/);
+  meta.productType ||= firstMatch(body, /(?:Product Type|product)\s*[:=]\s*([A-Za-z0-9,-]+)/);
   meta.iosVersion ||= firstMatch(body, /(?:iOS Version|OS Version|os_version)\s*[:=]\s*([^\n]+)/i);
   meta.kernelVersion ||= firstMatch(body, /Kernel Version:\s*([^\n]+)/i);
   meta.buildVersion ||= firstMatch(body, /Build:\s*([^\n]+)/i);
@@ -253,7 +256,7 @@ export function parsePanicLog(input: string): ParsedLog {
   }
 
   // capture watchdog-targeted process when generic pattern triggered
-  const wdogMatches = [...search.matchAll(/no successful checkins from ([\w\.\-]+) in \d+ seconds/gi)];
+  const wdogMatches = [...search.matchAll(/no successful checkins from ([\w.-]+) in \d+ seconds/gi)];
   for (const m of wdogMatches) {
     const proc = m[1];
     pushEvidence(evidences, {
@@ -281,8 +284,7 @@ export function parsePanicLog(input: string): ParsedLog {
   const panicSignatures = extractPanicSignatures(search);
   const processHints = extractProcessHints(search, meta);
   const subsystemHints = inferSubsystemHints({ missingSensors, processHints, panicSignatures });
-
-  return {
+  const detectedSignals = detectSignals({
     parserVersion: PARSER_VERSION,
     metadata: meta,
     detectedCategories: [...detectedCats],
@@ -296,7 +298,48 @@ export function parsePanicLog(input: string): ParsedLog {
     },
     normalizedText: search.toLowerCase(),
     lines,
+    detectedSignals: [],
+    parserSummary: { totalLines: 0, evidenceCount: 0, signalCount: 0, parseReliability: 0, ambiguityLevel: 'high', notes: [] },
+  });
+  const parserSummary = buildParserSummary({
+    parserVersion: PARSER_VERSION,
+    metadata: meta,
+    detectedCategories: [...detectedCats],
+    rawEvidences: evidences,
+    structured: {
+      missingSensors,
+      watchdogTargets: wdogMatches.map(m => m[1]).filter(Boolean),
+      panicSignatures,
+      processHints,
+      subsystemHints,
+    },
+    normalizedText: search.toLowerCase(),
+    lines,
+    detectedSignals,
+    parserSummary: { totalLines: 0, evidenceCount: 0, signalCount: 0, parseReliability: 0, ambiguityLevel: 'high', notes: [] },
+  }, detectedSignals);
+
+  return {
+    parserVersion: PARSER_VERSION,
+    metadata: meta,
+    detectedCategories: [...detectedCats],
+    rawEvidences: evidences,
+    detectedSignals,
+    parserSummary,
+    structured: {
+      missingSensors,
+      watchdogTargets: wdogMatches.map(m => m[1]).filter(Boolean),
+      panicSignatures,
+      processHints,
+      subsystemHints,
+    },
+    normalizedText: search.toLowerCase(),
+    lines,
   };
+}
+
+function stringValue(value: unknown): string | undefined {
+  return typeof value === 'string' && value.trim() ? value.trim() : undefined;
 }
 
 function inferCategoryFromProcess(proc: string): string {
@@ -331,7 +374,7 @@ function extractMissingSensors(text: string): string[] {
 function extractPanicSignatures(text: string): string[] {
   const out = new Set<string>();
   const regexes = [
-    /panic\(cpu \d+ caller [^\)]+\):\s*([^\n]+)/gi,
+    /panic\(cpu \d+ caller [^)]+\):\s*([^\n]+)/gi,
     /panicString["']?\s*[:=]\s*["']([^"']+)["']/gi,
     /panic reason:\s*([^\n]+)/gi,
     /userspace watchdog timeout:\s*([^\n]+)/gi,
@@ -353,7 +396,7 @@ function extractProcessHints(text: string, meta: ParsedMetadata): string[] {
     const p = (m[1] ?? '').trim().toLowerCase();
     if (p) hints.add(p);
   }
-  for (const m of text.matchAll(/no successful checkins from ([\w\.\-]+)/gi)) {
+  for (const m of text.matchAll(/no successful checkins from ([\w.-]+)/gi)) {
     const p = (m[1] ?? '').trim().toLowerCase();
     if (p) hints.add(p);
   }
